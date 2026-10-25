@@ -1,0 +1,31 @@
+{
+    "request_id": "1234567890",
+    "timestamp": "2026-04-28T07:23:27Z",
+    "request_type": "get_all_report_data",
+    "parameters": {
+        "include_advanced_analysis": true,
+        "include_run_type": true,
+        "include_stride_assessment": true,
+        "include_lean_angle": true,
+        "include_vertical_oscillation": true,
+        "include_assessment": true,
+        "include_recommendation": true,
+        "include_suggestions": true
+    },
+    "required_fields": [
+        "runType",
+        "strideAssessment",
+        "leanAngle",
+        "forwardLeanAngle",
+        "verticalOscillation",
+        "verticalAmplitude",
+        "stepLength.left",
+        "stepLength.right",
+        "advanced_analysis.stride_position",
+        "advanced_analysis.forward_lean_angle",
+        "advanced_analysis.vertical_oscillation",
+        "assessment",
+        "recommendation",
+        "suggestions"
+    ]
+}

@@ -1,0 +1,104 @@
+"""Local Edge UI acceptance test. Run against an isolated test server, not user data."""
+import argparse
+import json
+import time
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--url',default='http://127.0.0.1:3011')
+    parser.add_argument('--video',required=True)
+    parser.add_argument('--output',default='test-artifacts')
+    args=parser.parse_args()
+    output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
+    with sync_playwright() as p:
+        browser=p.chromium.launch(channel='msedge',headless=True)
+        context=browser.new_context(viewport={'width':1440,'height':1000},accept_downloads=True)
+        page=context.new_page()
+        errors=[]
+        page.on('pageerror',lambda error:errors.append(str(error)))
+        page.goto(args.url)
+        expect(page.locator('#auth-dialog')).to_be_visible()
+        page.locator('#auth-toggle').click()
+        username='uitest_'+str(int(time.time()))
+        page.locator('#auth-username').fill(username)
+        page.locator('#auth-password').fill('acceptance-test-password')
+        page.locator('#auth-submit').click()
+        expect(page.locator('#auth-dialog')).not_to_be_visible()
+        expect(page.locator('#account-label')).to_have_text(username)
+        page.locator('nav [data-page="settings"]').click()
+        page.locator('#profile-height').fill('175')
+        page.locator('#profile-nickname').fill('验收测试')
+        page.locator('#profile-form button[type=submit]').click()
+        expect(page.locator('#account-label')).to_have_text('验收测试')
+        page.locator('nav [data-page="analyze"]').click()
+        page.locator('#video-file').set_input_files(args.video)
+        page.wait_for_function('document.getElementById("preview").readyState >= 2')
+        page.locator('#quality-check').click()
+        expect(page.locator('#quality-result')).to_contain_text('关键点可用比例',timeout=120000)
+        page.locator('#calibrate').click()
+        canvas=page.locator('#calibration-canvas')
+        box=canvas.bounding_box()
+        canvas.click(position={'x':box['width']/2,'y':box['height']*.15})
+        canvas.click(position={'x':box['width']/2,'y':box['height']*.85})
+        expect(page.locator('#capture-pixels')).not_to_have_value('')
+        # The two arbitrary clicks above test UI only; clear before real measurement.
+        page.locator('#calibration-clear').click()
+        page.screenshot(path=str(output/'capture-desktop.png'),full_page=True)
+        report_ids=[]
+        for n in range(2):
+            page.locator('#analyze-btn').click()
+            page.wait_for_function(f'document.querySelectorAll("#jobs [data-report]").length >= {n+1}',timeout=240000)
+            report_id=page.locator('#jobs [data-report]').first.get_attribute('data-report')
+            report_ids.append(report_id)
+        page.locator('#jobs [data-report]').first.click()
+        expect(page.locator('#page-detail')).to_be_visible()
+        page.wait_for_function('document.getElementById("report-video").readyState>=1')
+        page.locator('#detail-metric').select_option('leftKnee')
+        page.locator('#timeline').fill('1')
+        page.locator('#timeline').dispatch_event('input')
+        expect(page.locator('#playback-time')).to_contain_text('1.0')
+        page.locator('#rename-report').click()
+        page.locator('#edit-value').fill('验收报告 <安全显示>')
+        page.locator('#edit-confirm').click()
+        expect(page.locator('#detail-title')).to_have_text('验收报告 <安全显示>')
+        for kind,extension in [('pdf','pdf'),('csv','csv'),('video','mp4')]:
+            with page.expect_download() as info:
+                page.locator('#export-'+kind).click()
+            info.value.save_as(str(output/f'export.{extension}'))
+        page.screenshot(path=str(output/'report-desktop.png'),full_page=True)
+        page.locator('nav [data-page="compare"]').click()
+        page.locator('#compare-a').select_option(report_ids[0])
+        page.locator('#compare-b').select_option(report_ids[1])
+        page.locator('#compare-btn').click()
+        expect(page.locator('#comparison')).to_be_visible()
+        expect(page.locator('#compare-table tbody tr')).to_have_count(13)
+        page.locator('#compare-metric').select_option('leftKnee')
+        page.locator('#compare-timeline').fill('50')
+        page.locator('#compare-timeline').dispatch_event('input')
+        page.screenshot(path=str(output/'compare-desktop.png'),full_page=True)
+        page.locator('nav [data-page="growth"]').click()
+        expect(page.locator('#growth-summary')).to_be_visible()
+        page.reload()
+        expect(page.locator('#account-label')).to_have_text('验收测试')
+        page.locator('nav [data-page="reports"]').click()
+        expect(page.locator('.report-card')).to_have_count(2)
+        page.locator('.report-card').first.click()
+        page.locator('#delete-report').click()
+        page.locator('#edit-confirm').click()
+        expect(page.locator('#page-reports')).to_be_visible()
+        expect(page.locator('.report-card')).to_have_count(1)
+        page.set_viewport_size({'width':390,'height':844})
+        page.locator('nav [data-page="analyze"]').click()
+        page.screenshot(path=str(output/'capture-mobile.png'),full_page=True)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Mobile horizontal overflow'
+        page.locator('#account-btn').click()
+        expect(page.locator('#account-label')).to_have_text('尚未登录')
+        assert not errors,errors
+        (output/'browser-result.json').write_text(json.dumps({'passed':True,'pageErrors':errors,'reportIds':report_ids},ensure_ascii=False,indent=2),encoding='utf-8')
+        context.close();browser.close()
+
+
+if __name__=='__main__':main()

@@ -1,0 +1,37 @@
+# Local Python / tooling
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+.env
+.env.*
+!.env.example
+.codex/
+.agents/
+.aws/
+node_modules/
+
+# Private runtime data and generated artifacts
+back/data/
+back/uploads/
+back/reports/
+back/stream_videos/
+back/stream_screenshots/
+back/result.mp4
+back/output_data.json
+front/data/
+front/uploads/
+front/reports/
+front/stream_videos/
+test-artifacts/
+.test-data/
+*.log
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# IDE / tooling artifacts
+.trae-html-share-packages/
+.screenshots/

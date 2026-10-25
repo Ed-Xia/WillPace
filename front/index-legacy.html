@@ -1,0 +1,4658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KinetiX - 跑步姿态评估</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .phone-container {
+            width: 100%;
+            max-width: 375px;
+            aspect-ratio: 9 / 21;
+            background: #fafbfc;
+            border-radius: 36px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+            position: relative;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .notch {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 150px;
+            height: 30px;
+            background: #000000;
+            border-radius: 0 0 20px 20px;
+            z-index: 100;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 50px 24px 20px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #2d1f5e 100%);
+            color: white;
+        }
+
+        .mode-switch {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: white;
+        }
+
+        .mode-switch-checkbox {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .mode-switch-label {
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .app-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .mode-switch-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .mode-switch-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .mode-icon {
+            font-size: 14px;
+        }
+        
+        .mode-text {
+            font-size: 12px;
+            font-weight: 500;
+            color: white;
+        }
+
+        .logo-image {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            object-fit: cover;
+        }
+
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+        }
+
+        .app-name {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .user-avatar {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .user-avatar:hover {
+            transform: scale(1.08);
+            border-color: rgba(255, 255, 255, 0.9);
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .user-avatar-placeholder {
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: white;
+        }
+
+        .function-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f7fa;
+        }
+
+        .function-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .function-list::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .function-item {
+            background: white;
+            border-radius: 16px;
+            padding: 25px 20px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .function-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .function-item:active {
+            transform: translateY(0);
+        }
+
+        .function-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .function-icon.run {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .function-icon.report {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .function-icon.growth {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .function-text {
+            flex: 1;
+        }
+
+        .function-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .function-desc {
+            font-size: 13px;
+            color: #999;
+        }
+
+        .function-arrow {
+            color: #ccc;
+            font-size: 18px;
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 24px;
+            padding: 32px;
+            width: 90%;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal-title {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            text-align: center;
+            color: #1a1a2e;
+            letter-spacing: -0.5px;
+        }
+
+        .avatar-upload {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .avatar-preview {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            overflow: hidden;
+            margin-bottom: 15px;
+            border: 3px solid #667eea;
+        }
+
+        .avatar-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .avatar-preview-placeholder {
+            width: 100%;
+            height: 100%;
+            background: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: #ccc;
+        }
+
+        .upload-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.3s;
+        }
+
+        .upload-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1.5px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            transition: all 0.3s;
+            background: #f9fafb;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 14px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        /* Page Container */
+        .page {
+            display: none;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .back-button {
+            position: absolute;
+            top: 50px;
+            left: 24px;
+            background: white;
+            border: 1.5px solid #e5e7eb;
+            color: #374151;
+            padding: 10px 16px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 50;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        .back-button:hover {
+            background: #f9fafb;
+            border-color: #d1d5db;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .page-content {
+            padding: 100px 24px 24px;
+            text-align: center;
+            color: #1a1a2e;
+        }
+
+        .page-title {
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .page-desc {
+            font-size: 14px;
+            color: #9ca3af;
+            line-height: 1.6;
+        }
+
+        /* 成长档案页面样式 */
+        .growth-content {
+            padding: 100px 24px 24px;
+            overflow-y: auto;
+            height: calc(100% - 80px);
+        }
+
+        .growth-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .growth-title {
+            font-size: 26px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }
+
+        .growth-desc {
+            font-size: 14px;
+            color: #9ca3af;
+        }
+
+        .growth-chart-card {
+            background: white;
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .growth-chart-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 3px;
+            text-align: center;
+        }
+
+        .growth-chart-subtitle {
+            font-size: 12px;
+            color: #667eea;
+            font-weight: 500;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .growth-chart-info {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            margin-top: 12px;
+            padding: 10px;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+
+        .growth-chart-info-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .growth-chart-info-text {
+            font-size: 11px;
+            color: #334155;
+            line-height: 1.5;
+        }
+        
+        /* 滑动查看样式 */
+        .growth-chart-card.stride-chart-card {
+            height: 320px;
+            overflow-y: auto;
+        }
+        
+        .growth-chart-card.lean-angle-chart-card, .growth-chart-card.vertical-oscillation-chart-card {
+            overflow-x: auto;
+        }
+        
+        .growth-chart-card.lean-angle-chart-card canvas, .growth-chart-card.vertical-oscillation-chart-card canvas {
+            min-width: 300px;
+            height: 160px !important;
+        }
+
+        .growth-alert-card {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 16px;
+            border: 2px solid #f59e0b;
+        }
+
+        .growth-alert-icon {
+            font-size: 32px;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        .growth-alert-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #92400e;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+
+        .growth-alert-list {
+            font-size: 13px;
+            color: #78350f;
+            line-height: 1.8;
+        }
+
+        .growth-alert-item {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 3px solid #f59e0b;
+        }
+
+        .mode-switch {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #667eea;
+            margin-top: 8px;
+        }
+
+        .mode-switch-checkbox {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .mode-switch-label {
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .growth-feedback-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            padding: 24px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+        }
+
+        .growth-feedback-icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+        }
+
+        .growth-feedback-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .growth-feedback-text {
+            font-size: 14px;
+            line-height: 1.6;
+            opacity: 0.95;
+        }
+
+        /* 空状态样式 */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .empty-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }
+
+        .empty-desc {
+            font-size: 14px;
+            color: #9ca3af;
+            line-height: 1.6;
+        }
+
+        /* 跑步记录页面样式 */
+        .run-content {
+            padding: 100px 24px 24px;
+            color: #1a1a2e;
+            overflow-y: auto;
+            height: calc(100% - 80px);
+        }
+
+        .run-content::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .run-content::-webkit-scrollbar-thumb {
+            background: #e5e7eb;
+            border-radius: 2px;
+        }
+
+        .step-container {
+            text-align: left;
+            margin-bottom: 32px;
+        }
+
+        .step-title {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: #1a1a2e;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: -0.3px;
+        }
+
+        .step-number {
+            background: #e5e7eb;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #6b7280;
+        }
+
+        .camera-preview {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #f3f4f6;
+            border-radius: 16px;
+            border: 2px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .camera-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .camera-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            color: #9ca3af;
+        }
+
+        .camera-placeholder-icon {
+            font-size: 44px;
+        }
+
+        .camera-placeholder-text {
+            font-size: 14px;
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        .camera-placeholder-hint {
+            font-size: 12px;
+            color: #9ca3af;
+            background: #f3f4f6;
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin-top: 4px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .btn-small {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn-outline {
+            background: white;
+            color: #374151;
+            border: 1.5px solid #e5e7eb;
+        }
+
+        .btn-outline:hover {
+            background: #f9fafb;
+            border-color: #d1d5db;
+            transform: translateY(-1px);
+        }
+
+        .btn-primary-small {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.25);
+        }
+
+        .btn-primary-small:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .start-button {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 16px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 15px 0;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .start-button:hover {
+            transform: scale(1.02);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .start-button:active {
+            transform: scale(0.98);
+        }
+
+        .voice-hint {
+            text-align: center;
+            font-size: 13px;
+            color: #9ca3af;
+            margin-top: 12px;
+            background: #f3f4f6;
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: block;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .report-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 15px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+        .report-metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .report-metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-name {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .metric-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .metric-unit {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-left: 4px;
+        }
+
+        /* 报告册页面样式 */
+        .report-content {
+            padding: 100px 24px 24px;
+            color: #1a1a2e;
+            overflow-y: auto;
+            height: calc(100% - 80px);
+        }
+
+        .report-page-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .report-page-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .report-page-desc {
+            font-size: 14px;
+            color: #6b7280;
+            font-weight: 400;
+        }
+
+        .report-list {
+            margin-top: 20px;
+        }
+
+        .report-item {
+            background: white;
+            border-radius: 20px;
+            padding: 20px 24px;
+            margin-bottom: 16px;
+            border: 1px solid #f3f4f6;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            position: relative;
+        }
+
+        .report-item:hover {
+            background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+            border-color: #e5e7eb;
+        }
+
+        .report-actions {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 8px;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+            z-index: 10;
+        }
+
+        .report-item:hover .report-actions {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .report-date {
+            font-size: 11px;
+            color: #9ca3af;
+            font-weight: 500;
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+
+        .report-action-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: transparent;
+        }
+
+        .report-action-btn.delete {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .report-action-btn.delete:hover {
+            background: #dc2626;
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .report-action-btn.edit {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+
+        .report-action-btn.edit:hover {
+            background: #2563eb;
+            color: white;
+            transform: scale(1.1);
+        }
+
+        /* 报告详情页样式 */
+        .report-detail-content {
+            padding: 100px 24px 24px;
+            color: #1a1a2e;
+            overflow-y: auto;
+            height: calc(100% - 80px);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .report-detail-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 24px;
+            padding: 32px 24px;
+            margin-bottom: 24px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+        }
+
+        .report-detail-number {
+            font-size: 12px;
+            opacity: 0.9;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .report-detail-name {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .report-detail-date {
+            font-size: 13px;
+            opacity: 0.8;
+            font-weight: 400;
+        }
+
+        .report-detail-body {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            padding-bottom: 20px;
+        }
+
+        .detail-section {
+            background: white;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            border: 1px solid #f3f4f6;
+        }
+
+        .detail-section-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .detail-section-title::before {
+            content: '';
+            width: 4px;
+            height: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+        }
+
+        .detail-metrics {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .detail-metric-card {
+            background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
+            border-radius: 16px;
+            padding: 20px 24px;
+            text-align: center;
+            border: 1px solid #f3f4f6;
+            transition: all 0.3s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 140px;
+        }
+
+        .detail-metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
+        }
+
+        .detail-metric-icon {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .detail-metric-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+
+        .detail-metric-name {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        .detail-metric-unit {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 10px;
+            font-weight: 400;
+        }
+
+        .detail-metric-comment {
+            font-size: 13px;
+            color: #667eea;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.08) 100%);
+            padding: 8px 16px;
+            border-radius: 10px;
+            font-weight: 500;
+            width: 100%;
+            margin-top: 4px;
+        }
+
+        .detail-suggestion {
+            background: linear-gradient(135deg, #fef3c7 0%, #fef9e7 100%);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid #fde68a;
+        }
+
+        .suggestion-placeholder {
+            font-size: 14px;
+            color: #9ca3af;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        /* 总体评价卡片 */
+        .overall-assessment-card {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid #bae6fd;
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+        }
+
+        .overall-assessment-icon {
+            font-size: 40px;
+            flex-shrink: 0;
+        }
+
+        .overall-assessment-content {
+            flex: 1;
+        }
+
+        .overall-assessment-title {
+            font-size: 14px;
+            color: #0369a1;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .overall-assessment-score {
+            font-size: 36px;
+            font-weight: 700;
+            color: #0284c7;
+            margin-bottom: 8px;
+        }
+
+        .overall-assessment-text {
+            font-size: 14px;
+            color: #0c4a6e;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .overall-assessment-stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 12px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #0284c7;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #0369a1;
+            margin-top: 4px;
+        }
+
+        /* 图表卡片 */
+        .chart-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .chart-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .chart-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+        }
+
+        .chart-card canvas {
+            width: 100% !important;
+            height: auto !important;
+        }
+
+        /* 建议列表 */
+        .suggestion-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .suggestion-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px;
+            background: linear-gradient(135deg, #fef3c7 0%, #fef9e7 100%);
+            border-radius: 10px;
+            border: 1px solid #fde68a;
+            transition: all 0.3s;
+        }
+
+        .suggestion-item:hover {
+            background: linear-gradient(135deg, #fef9e7 0%, #fef3c7 100%);
+            transform: translateX(4px);
+        }
+
+        .suggestion-item-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .suggestion-item-content {
+            flex: 1;
+            font-size: 14px;
+            color: #92400e;
+            line-height: 1.6;
+        }
+
+        .suggestion-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+
+        .suggestion-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .suggestion-item:hover {
+            background: rgba(255, 255, 255, 0.8);
+            transform: translateX(4px);
+        }
+
+        .suggestion-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .suggestion-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .suggestion-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+            letter-spacing: -0.3px;
+        }
+
+        .suggestion-text {
+            font-size: 12px;
+            color: #374151;
+            line-height: 1.7;
+            font-weight: 400;
+            white-space: pre-line;
+        }
+
+        .report-header {
+            font-size: 10px;
+            color: #9ca3af;
+            font-weight: 700;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .report-type {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+
+        .report-type-icon {
+            font-size: 22px;
+        }
+
+        .report-mock-tag {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            color: #92400e;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+
+        .report-api-tag {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            color: #1e40af;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+
+        .report-date {
+            font-size: 11px;
+            color: #9ca3af;
+            font-weight: 500;
+        }
+
+        .report-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 12px;
+            background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
+            border-radius: 16px;
+            margin-top: 8px;
+        }
+
+        .report-stat-item {
+            text-align: center;
+            flex: 1;
+            padding: 8px 0;
+        }
+
+        .report-stat-item.full-width {
+            padding: 12px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .report-stats-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .report-stat-item:not(.full-width) {
+            flex: 1;
+        }
+
+        .report-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 4px;
+            line-height: 1.2;
+        }
+
+        .report-stat-label {
+            font-size: 11px;
+            color: #6b7280;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        .report-stat-item {
+            flex: 1;
+            text-align: center;
+            background: #f9fafb;
+            padding: 12px 8px;
+            border-radius: 10px;
+        }
+
+        .report-stat-value {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            color: #1a1a2e;
+        }
+
+        .report-stat-label {
+            font-size: 11px;
+            color: #9ca3af;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 24px;
+            background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
+            border-radius: 24px;
+            border: 2px dashed #e5e7eb;
+        }
+
+        .empty-icon {
+            font-size: 80px;
+            margin-bottom: 24px;
+            opacity: 0.5;
+        }
+
+        .empty-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #1a1a2e;
+            letter-spacing: -0.3px;
+        }
+
+        .empty-desc {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 32px;
+            line-height: 1.7;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .action-btn {
+            width: 100%;
+            padding: 16px 24px;
+            border: none;
+            border-radius: 14px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .action-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .action-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .action-btn-secondary {
+            background: white;
+            color: #374151;
+            border: 1.5px solid #e5e7eb;
+        }
+
+        .action-btn-secondary:hover {
+            background: #f9fafb;
+            border-color: #d1d5db;
+            transform: translateY(-1px);
+        }
+
+        /* 自定义弹窗样式 */
+        .custom-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .custom-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .custom-modal {
+            background: white;
+            border-radius: 24px;
+            padding: 32px 28px;
+            max-width: 340px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+            transform: scale(0.9) translateY(20px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .custom-modal-overlay.active .custom-modal {
+            transform: scale(1) translateY(0);
+        }
+
+        .modal-icon {
+            font-size: 48px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+            text-align: center;
+            margin-bottom: 16px;
+            letter-spacing: -0.3px;
+        }
+
+        .modal-content {
+            font-size: 15px;
+            color: #6b7280;
+            text-align: center;
+            line-height: 1.7;
+            margin-bottom: 28px;
+            white-space: pre-line;
+        }
+
+        .modal-buttons-row {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 14px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            max-width: 140px;
+        }
+
+        .modal-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .modal-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .modal-btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .modal-btn-secondary:hover {
+            background: #e5e7eb;
+            transform: translateY(-1px);
+        }
+
+        .modal-btn-single {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            width: 100%;
+            max-width: none;
+        }
+
+        .modal-btn-single:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        /* 录制页面样式 */
+        .record-controls {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .record-timer {
+            font-size: 36px;
+            font-weight: 600;
+            color: #1a1a2e;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            letter-spacing: 1px;
+            background: #f3f4f6;
+            padding: 8px 24px;
+            border-radius: 12px;
+        }
+
+        .record-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .record-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 64px;
+        }
+
+        .btn-icon {
+            font-size: 22px;
+        }
+
+        .btn-text {
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            box-shadow: 0 3px 12px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-start:hover {
+            transform: scale(1.06);
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-pause, .btn-resume {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            box-shadow: 0 3px 12px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-pause:hover, .btn-resume:hover {
+            transform: scale(1.06);
+            box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+            color: white;
+            box-shadow: 0 3px 12px rgba(107, 114, 128, 0.3);
+        }
+
+        .btn-stop:hover {
+            transform: scale(1.06);
+            box-shadow: 0 4px 16px rgba(107, 114, 128, 0.4);
+        }
+
+        .btn-save {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 14px 40px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 3px 12px rgba(16, 185, 129, 0.3);
+            width: 100%;
+            max-width: 280px;
+            border-radius: 14px;
+        }
+
+        .btn-save:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="phone-container">
+        <div class="notch"></div>
+
+        <!-- 主页 -->
+        <div id="home-page" class="page active">
+            <div class="header">
+                <div class="app-logo">
+                    <img src="app-logo.png" alt="KinetiX" class="logo-image">
+                    <span class="app-name">KinetiX</span>
+                </div>
+                <div class="mode-switch-btn" onclick="toggleMode()">
+                    <span class="mode-icon">🎨</span>
+                    <span class="mode-text" id="modeText">专业模式</span>
+                </div>
+                <div class="user-avatar" id="userAvatar" onclick="openProfileModal()">
+                    <div class="user-avatar-placeholder" id="avatarPlaceholder">用户</div>
+                    <img id="avatarImage" src="" alt="用户头像" style="display: none;">
+                </div>
+            </div>
+            <input type="checkbox" id="funMode" style="display: none;">
+
+            <div class="function-list">
+                <div class="function-item" onclick="navigateTo('upload-step1-page')">
+                    <div class="function-icon run">📹</div>
+                    <div class="function-text">
+                        <div class="function-title">视频分析</div>
+                        <div class="function-desc">上传跑步视频进行分析</div>
+                    </div>
+                    <div class="function-arrow">›</div>
+                </div>
+
+                <div class="function-item" onclick="navigateTo('record-step1-page')">
+                    <div class="function-icon run">🏃</div>
+                    <div class="function-text">
+                        <div class="function-title">实时分析</div>
+                        <div class="function-desc">实时跑步姿态评估</div>
+                    </div>
+                    <div class="function-arrow">›</div>
+                </div>
+
+                <div class="function-item" onclick="navigateTo('report-page')">
+                    <div class="function-icon report">📊</div>
+                    <div class="function-text">
+                        <div class="function-title">报告册</div>
+                        <div class="function-desc">查看历史跑步数据和分析</div>
+                    </div>
+                    <div class="function-arrow">›</div>
+                </div>
+
+                <div class="function-item" onclick="navigateTo('growth-page')">
+                    <div class="function-icon growth">📈</div>
+                    <div class="function-text">
+                        <div class="function-title">成长档案</div>
+                        <div class="function-desc">追踪您的进步和成长轨迹</div>
+                    </div>
+                    <div class="function-arrow">›</div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 报告册页面 -->
+        <div id="report-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="report-content">
+                <div class="report-page-header">
+                    <div class="report-page-title">跑步报告册</div>
+                    <div class="report-page-desc">查看您的历史跑步数据和分析</div>
+                </div>
+                <div class="report-list" id="reportList">
+                </div>
+            </div>
+        </div>
+
+        <!-- 报告详情页 -->
+        <div id="report-detail-page" class="page">
+            <button class="back-button" onclick="navigateTo('report-page')">← 返回</button>
+            <div class="report-detail-content" style="overflow-y: auto; -webkit-overflow-scrolling: touch;">
+                <div class="report-detail-header">
+                    <div class="report-detail-number" id="detailReportNumber">报告 #1</div>
+                    <div class="report-detail-name" id="detailReportName">视频分析 #1</div>
+                    <div class="report-detail-date" id="detailReportDate">2024-01-01 12:00</div>
+                </div>
+                
+                <div class="report-detail-body">
+                    <!-- 总体评价 -->
+                    <div class="detail-section">
+                        <div class="detail-section-title">总体评价</div>
+                        <div class="overall-assessment-card" id="overallAssessmentCard">
+                            <div class="overall-assessment-icon">📊</div>
+                            <div class="overall-assessment-content">
+                                <div class="overall-assessment-title">跑姿健康度</div>
+                                <div class="overall-assessment-score" id="overallHealthyRate">--%</div>
+                                <div class="overall-assessment-text" id="overallAssessmentText">--</div>
+                                <div class="overall-assessment-stats">
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="totalDataPoints">0</div>
+                                        <div class="stat-label">数据点</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="analysisDuration">0</div>
+                                        <div class="stat-label">分析时长(秒)</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="abnormalFrameCount">0</div>
+                                        <div class="stat-label">异常帧</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 跑姿类型 -->
+                    <div class="detail-section">
+                        <div class="detail-section-title">跑姿类型</div>
+                        <div class="detail-metrics">
+                            <div class="detail-metric-card">
+                                <div class="detail-metric-icon">🧙</div>
+                                <div class="detail-metric-value" id="detailRunType">--</div>
+                                <div class="detail-metric-name">总体评估</div>
+                                <div class="detail-metric-unit"></div>
+                                <div class="detail-metric-comment" id="detailRunAssessment">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 核心数据 -->
+                    <div class="detail-section">
+                        <div class="detail-section-title">核心数据</div>
+                        <div class="detail-metrics">
+                            <div class="detail-metric-card">
+                                <div class="detail-metric-icon">👣</div>
+                                <div class="detail-metric-value" id="detailStride">--</div>
+                                <div class="detail-metric-name">步幅（落脚点位置）</div>
+                                <div class="detail-metric-unit"></div>
+                                <div class="detail-metric-comment" id="detailStrideComment">--</div>
+                            </div>
+                            
+                            <div class="detail-metric-card">
+                                <div class="detail-metric-icon">📐</div>
+                                <div class="detail-metric-value" id="detailLeanAngle">--</div>
+                                <div class="detail-metric-name">前倾角度</div>
+                                <div class="detail-metric-unit">度</div>
+                                <div class="detail-metric-comment" id="detailLeanAngleComment">--</div>
+                            </div>
+                            
+                            <div class="detail-metric-card">
+                                <div class="detail-metric-icon">📊</div>
+                                <div class="detail-metric-value" id="detailVerticalOscillation">--</div>
+                                <div class="detail-metric-name">垂直振幅</div>
+                                <div class="detail-metric-unit">厘米</div>
+                                <div class="detail-metric-comment" id="detailVerticalOscillationComment">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 数据趋势图表 -->
+                    <div class="detail-section" id="chartsSection" style="display: none;">
+                        <div class="detail-section-title">数据趋势</div>
+                        
+                        <!-- 前倾角度趋势图 -->
+                        <div class="chart-card">
+                            <div class="chart-title">前倾角度趋势</div>
+                            <canvas id="leanAngleChart" height="200"></canvas>
+                        </div>
+                        
+                        <!-- 垂直振幅趋势图 -->
+                        <div class="chart-card">
+                            <div class="chart-title">垂直振幅趋势</div>
+                            <canvas id="verticalOscillationChart" height="200"></canvas>
+                        </div>
+                        
+                        <!-- 步幅趋势图 -->
+                        <div class="chart-card">
+                            <div class="chart-title">步幅趋势（左右脚）</div>
+                            <canvas id="strideChart" height="200"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- 异常姿态截图 -->
+                    <div class="detail-section" id="abnormalFramesSection" style="display: none;">
+                        <div class="detail-section-title">异常姿态截图</div>
+                        <div class="abnormal-frame-list" id="detailAbnormalFrameList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px;">
+                        </div>
+                    </div>
+                    
+                    <!-- 改进建议 -->
+                    <div class="detail-section">
+                        <div class="detail-section-title">改进建议</div>
+                        <div class="suggestion-list" id="detailSuggestionList">
+                        </div>
+                    </div>
+                    
+                    <!-- 详细数据列表 -->
+                    <div class="detail-section" id="detailedDataSection" style="display: none;">
+                        <div class="detail-section-title">详细数据记录</div>
+                        <div id="detailedDataList" style="display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 成长档案页面 -->
+        <div id="growth-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="growth-content">
+                <div class="growth-header">
+                    <div class="growth-title">成长档案</div>
+                    <div class="growth-desc">追踪您的进步轨迹</div>
+                </div>
+                
+                <!-- 数据不足提示 -->
+                <div id="growth-empty-state" class="empty-state" style="display: none;">
+                    <div style="font-size: 80px; margin-bottom: 20px;">📈</div>
+                    <div class="empty-title">数据不足</div>
+                    <div class="empty-desc">至少需要 2 条跑步记录才能生成成长档案</div>
+                    <button class="action-btn action-btn-primary" onclick="navigateTo('upload-step1-page')" style="margin-top: 20px;">
+                        📹 去上传视频
+                    </button>
+                </div>
+                
+                <!-- 图表容器 -->
+                <div id="growth-charts" style="display: none;">
+                    <!-- 步幅落脚点 -->
+                    <div class="growth-chart-card stride-chart-card">
+                        <div class="growth-chart-title">步幅落脚点</div>
+                        <div class="growth-chart-subtitle">标准：重心正下方</div>
+                        <canvas id="growth-strideChart"></canvas>
+                        <div class="growth-chart-info">
+                            <div class="growth-chart-info-icon">💡</div>
+                            <div class="growth-chart-info-text">避免"刹车效应"，减小对膝盖和骨骼的冲击力</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 前倾角度趋势图 -->
+                    <div class="growth-chart-card lean-angle-chart-card">
+                        <div class="growth-chart-title">前倾角度</div>
+                        <div class="growth-chart-subtitle">标准范围：5-10 度</div>
+                        <canvas id="growth-leanAngleChart"></canvas>
+                        <div class="growth-chart-info">
+                            <div class="growth-chart-info-icon">💡</div>
+                            <div class="growth-chart-info-text">整体角度，非弯腰。过大增加腰椎压力</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 垂直振幅趋势图 -->
+                    <div class="growth-chart-card vertical-oscillation-chart-card">
+                        <div class="growth-chart-title">垂直振幅</div>
+                        <div class="growth-chart-subtitle">标准：< 8 厘米</div>
+                        <canvas id="growth-verticalOscillationChart"></canvas>
+                        <div class="growth-chart-info">
+                            <div class="growth-chart-info-icon">💡</div>
+                            <div class="growth-chart-info-text">贴地飞行，减少关节损耗</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 异常数据提醒 -->
+                    <div class="growth-alert-card" id="growthAlerts" style="display: none;">
+                        <div class="growth-alert-icon">⚠️</div>
+                        <div class="growth-alert-title">需要注意</div>
+                        <div class="growth-alert-list" id="growthAlertList"></div>
+                    </div>
+                    
+                    <!-- AI 激励反馈 -->
+                    <div class="growth-feedback-card">
+                        <div class="growth-feedback-icon">💡</div>
+                        <div class="growth-feedback-title">AI 教练反馈</div>
+                        <div class="growth-feedback-text" id="aiFeedback">正在分析您的进步情况...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 视频录制页面 -->
+        <div id="record-page" class="page">
+            <button class="back-button" onclick="navigateTo('upload-step1-page')">← 返回</button>
+            <div class="run-content">
+                <div class="camera-preview" id="recordPreview">
+                    <div class="camera-placeholder">
+                        <div class="camera-placeholder-icon">📹</div>
+                        <div class="camera-placeholder-text">摄像头预览</div>
+                        <div class="camera-placeholder-hint">请确保拍摄角度为侧面</div>
+                    </div>
+                    <video id="recordVideo" autoplay muted playsinline style="display: none; width: 100%; height: 100%; object-fit: cover;"></video>
+                </div>
+
+                <div class="record-controls">
+                    <div class="record-timer" id="recordTimer">00:00</div>
+                    
+                    <div class="record-buttons">
+                        <button class="record-btn btn-start" id="startBtn" onclick="startRecording2()">
+                            <span class="btn-icon">⏺</span>
+                            <span class="btn-text">开始</span>
+                        </button>
+                        
+                        <button class="record-btn btn-pause" id="pauseBtn" onclick="pauseRecording2()" style="display: none;">
+                            <span class="btn-icon">⏸</span>
+                            <span class="btn-text">暂停</span>
+                        </button>
+                        
+                        <button class="record-btn btn-resume" id="resumeBtn" onclick="resumeRecording2()" style="display: none;">
+                            <span class="btn-icon">▶</span>
+                            <span class="btn-text">继续</span>
+                        </button>
+                        
+                        <button class="record-btn btn-stop" id="stopBtn" onclick="stopRecording2()" style="display: none;">
+                            <span class="btn-icon">⏹</span>
+                            <span class="btn-text">结束</span>
+                        </button>
+                    </div>
+                    
+                    <button class="record-btn btn-save" id="saveBtn" onclick="saveRecording2()" style="display: none;">
+                        <span class="btn-icon">💾</span>
+                        <span class="btn-text">保存</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 上传视频 Step 1: 选择视频 -->
+        <div id="upload-step1-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title">
+                        <span class="step-number">Step 1</span>
+                        上传跑步视频
+                    </div>
+                    
+                    <div class="camera-preview" id="videoPreviewContainer">
+                        <div class="camera-placeholder" id="videoPlaceholder">
+                            <div class="camera-placeholder-icon">🏃</div>
+                            <div class="camera-placeholder-text">侧面拍摄 - 在跑步机上跑步</div>
+                            <div class="camera-placeholder-hint">请确保拍摄角度与示意图一致</div>
+                        </div>
+                        <video id="videoPreview" controls style="display: none; width: 100%; height: 100%; object-fit: cover;"></video>
+                    </div>
+                    
+                    <div class="button-group">
+                        <input type="file" id="videoInput" accept="video/*" style="display: none;" onchange="handleVideoUpload(event)">
+                        <button class="btn-small btn-primary-small" onclick="document.getElementById('videoInput').click()">
+                            📁 选择视频
+                        </button>
+                        <button class="btn-small btn-outline" onclick="navigateTo('record-page')">
+                            🎥 拍摄视频
+                        </button>
+                    </div>
+                    
+                    <button class="action-btn action-btn-primary" onclick="goToUploadStep2()" style="margin-top: 20px; display: none;">
+                        下一步
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 上传视频 Step 2: 视频分析 -->
+        <div id="upload-step2-page" class="page">
+            <button class="back-button" onclick="navigateTo('upload-step1-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title">
+                        <span class="step-number">Step 2</span>
+                        视频分析
+                    </div>
+                    
+                    <div style="text-align: center; padding: 40px 20px;">
+                        <div style="font-size: 64px; margin-bottom: 20px;">🧠</div>
+                        <div style="font-size: 16px; color: #6b7280; margin-bottom: 30px;">
+                            系统将自动分析您的跑步视频<br>提取关键运动数据
+                        </div>
+                        <button class="start-button" onclick="analyzeVideo()">
+                            🧠 开始分析
+                        </button>
+                        <div class="voice-hint">系统将自动分析跑步姿态</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 上传视频 Step 3: 查看报告 -->
+        <div id="upload-step3-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title">
+                        <span class="step-number">Step 3</span>
+                        获取分析报告
+                    </div>
+                    
+                    <div class="report-card" id="analysisReport">
+                        <div class="report-metric">
+                            <span class="metric-name">步幅（落脚点位置）</span>
+                            <span class="metric-value" id="reportStride">--</span>
+                        </div>
+                        <div class="report-metric">
+                            <span class="metric-name">前倾角度</span>
+                            <span class="metric-value" id="reportLeanAngle">--<span class="metric-unit">度</span></span>
+                        </div>
+                        <div class="report-metric">
+                            <span class="metric-name">垂直振幅</span>
+                            <span class="metric-value" id="reportVerticalOscillation">--<span class="metric-unit">厘米</span></span>
+                        </div>
+                    </div>
+                    
+                    <button class="action-btn action-btn-primary" onclick="navigateTo('report-page')" style="margin-top: 20px;">
+                        查看报告册
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实时分析 Step 1: 视觉信息采集配置 -->
+        <div id="record-step1-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title">
+                        <span class="step-number">Step 1</span>
+                        请先进行视觉信息采集配置
+                    </div>
+                    
+                    <!-- 摄像头预览画面 -->
+                    <div class="camera-preview" id="recordPreview">
+                        <div class="camera-placeholder" id="cameraPlaceholder">
+                            <div class="camera-placeholder-icon">📹</div>
+                            <div class="camera-placeholder-text">摄像头画面</div>
+                        </div>
+                        <video id="recordVideo" autoplay playsinline style="display: none; width: 100%; height: 100%; object-fit: cover;"></video>
+                    </div>
+                    
+                    <div class="button-group" style="margin-top: 20px;">
+                        <button class="action-btn" onclick="requestCameraPermission()">
+                            ⚙️ 权限设置
+                        </button>
+                        <button class="action-btn action-btn-primary" onclick="startRealtimeAnalysis()">
+                            ▶️ 开始分析
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实时分析 Step 2: 实时分析页面 -->
+        <div id="record-step2-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span class="step-number">实时分析</span>
+                            <span style="margin-left: 10px; font-size: 18px;">分析中...</span>
+                        </div>
+                        <button class="btn-small btn-danger" onclick="stopAnalysis()">
+                            ⏹️ 结束
+                        </button>
+                    </div>
+                    
+                    <!-- 摄像头预览画面 -->
+                    <div class="camera-preview" id="analysisPreview">
+                        <video id="analysisVideo" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                    </div>
+                    
+                    <!-- 控制按钮区域 -->
+                    <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <span style="font-size: 14px; font-weight: bold;">语音播报：</span>
+                        <button class="btn-small btn-outline" id="voiceToggle" onclick="toggleVoice()" style="margin: 0;">
+                            🔊 开
+                        </button>
+                        <button class="btn-small btn-secondary" id="pauseToggle" onclick="pauseAnalysis()" style="margin: 0;">
+                            ⏸️ 暂停分析
+                        </button>
+                    </div>
+                    
+                    <!-- 健康状态指示器 -->
+                    <div id="healthStatusIndicator" style="margin-top: 15px; padding: 12px; border-radius: 8px; text-align: center; font-size: 16px; font-weight: bold; background: #f3f4f6; color: #6b7280;">
+                        ⏳ 正在分析中...
+                    </div>
+                    
+                    <!-- 核心指标显示区域 -->
+                    <div class="realtime-metrics-container" style="display: block; margin-top: 15px; background: #f9fafb; padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 16px; font-weight: bold; margin-bottom: 10px;">📊 实时指标</div>
+                        
+                        <!-- 前倾角度 -->
+                        <div class="realtime-metric" style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
+                            <span class="metric-name" style="font-size: 14px;">前倾角度</span>
+                            <span class="metric-value" id="realtimeLeanAngle" style="font-size: 16px; font-weight: bold; color: #6b7280;">-- 度</span>
+                        </div>
+                        
+                        <!-- 垂直振幅 -->
+                        <div class="realtime-metric" style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
+                            <span class="metric-name" style="font-size: 14px;">垂直振幅</span>
+                            <span class="metric-value" id="realtimeVerticalOscillation" style="font-size: 16px; font-weight: bold; color: #6b7280;">-- 厘米</span>
+                        </div>
+                        
+                        <!-- 左脚步幅 -->
+                        <div class="realtime-metric" style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
+                            <span class="metric-name" style="font-size: 14px;">左脚步幅</span>
+                            <span class="metric-value" id="realtimeLeftStride" style="font-size: 16px; font-weight: bold; color: #6b7280;">-- 米</span>
+                        </div>
+                        
+                        <!-- 右脚步幅 -->
+                        <div class="realtime-metric" style="display: flex; justify-content: space-between; padding: 10px 0;">
+                            <span class="metric-name" style="font-size: 14px;">右脚步幅</span>
+                            <span class="metric-value" id="realtimeRightStride" style="font-size: 16px; font-weight: bold; color: #6b7280;">-- 米</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 健康问题区域 -->
+                    <div id="healthIssuesContainer" style="display: none; margin-top: 15px; padding: 15px; background: #fef2f2; border-radius: 8px; border-left: 4px solid #ef4444;">
+                        <div style="font-size: 16px; font-weight: bold; margin-bottom: 8px; color: #dc2626;">⚠️ 健康问题</div>
+                        <div id="healthIssuesList" style="font-size: 14px; color: #991b1b;"></div>
+                    </div>
+                    
+                    <!-- 异常姿态截图区域 -->
+                    <div id="abnormalScreenshotContainer" style="display: none; margin-top: 15px;">
+                        <div style="font-size: 16px; font-weight: bold; margin-bottom: 10px;">📸 异常姿态截图</div>
+                        <img id="abnormalScreenshot" style="width: 100%; border-radius: 8px; border: 2px solid #ef4444;" />
+                    </div>
+                    
+                    <!-- 语音播报文本区域 -->
+                    <div style="margin-top: 15px;">
+                        <div style="font-size: 16px; font-weight: bold; margin-bottom: 10px;">🔊 语音提示</div>
+                        <div id="realtimeVoiceText" style="padding: 15px; background: #fef3c7; border-radius: 8px; font-size: 14px; min-height: 60px; color: #92400e;">
+                            等待分析数据...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实时分析 Step 3: 查看报告 -->
+        <div id="record-step3-page" class="page">
+            <button class="back-button" onclick="navigateTo('home-page')">← 返回</button>
+            <div class="run-content">
+                <div class="step-container">
+                    <div class="step-title">
+                        <span class="step-number">Step 3</span>
+                        获取分析报告
+                    </div>
+                    
+                    <div class="report-card" id="realtimeReport">
+                        <div class="report-metric">
+                            <span class="metric-name">步幅（落脚点位置）</span>
+                            <span class="metric-value" id="realtimeStride">--</span>
+                        </div>
+                        <div class="report-metric">
+                            <span class="metric-name">前倾角度</span>
+                            <span class="metric-value" id="realtimeLeanAngle">--<span class="metric-unit">度</span></span>
+                        </div>
+                        <div class="report-metric">
+                            <span class="metric-name">垂直振幅</span>
+                            <span class="metric-value" id="realtimeVerticalOscillation">--<span class="metric-unit">厘米</span></span>
+                        </div>
+                    </div>
+                    
+                    <button class="action-btn action-btn-primary" onclick="navigateTo('report-page')" style="margin-top: 20px;">
+                        查看报告册
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义弹窗 -->
+    <div class="custom-modal-overlay" id="customModal">
+        <div class="custom-modal">
+            <div class="modal-icon" id="modalIcon">ℹ️</div>
+            <div class="modal-title" id="modalTitle">提示</div>
+            <div class="modal-content" id="modalContent">这是一条消息</div>
+            <div class="modal-buttons-row" id="modalButtons">
+                <button class="modal-btn modal-btn-single" onclick="closeModal()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 用户信息编辑弹窗 -->
+    <div class="modal-overlay" id="profileModal">
+        <div class="modal">
+            <div class="modal-title">编辑个人信息</div>
+            
+            <div class="avatar-upload">
+                <div class="avatar-preview">
+                    <div class="avatar-preview-placeholder" id="modalAvatarPlaceholder">用户</div>
+                    <img id="modalAvatarImage" src="" alt="头像预览" style="display: none;">
+                </div>
+                <input type="file" id="avatarInput" accept="image/*" style="display: none;" onchange="handleAvatarChange(event)">
+                <button class="upload-btn" onclick="document.getElementById('avatarInput').click()">
+                    📷 更换头像
+                </button>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">昵称</label>
+                <input type="text" class="form-input" id="nicknameInput" placeholder="请输入昵称">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">姓名</label>
+                <input type="text" class="form-input" id="nameInput" placeholder="请输入姓名">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">年龄</label>
+                <input type="number" class="form-input" id="ageInput" placeholder="请输入年龄">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">性别</label>
+                <select class="form-input" id="genderInput">
+                    <option value="">请选择</option>
+                    <option value="male">男</option>
+                    <option value="female">女</option>
+                </select>
+            </div>
+
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeProfileModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveProfile()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 用户数据存储
+        let userData = {
+            avatar: null,
+            nickname: '用户',
+            name: '',
+            age: '',
+            gender: ''
+        };
+
+        // 开始录制功能 - 更新为保存报告
+        function startRecording() {
+            // 随机选择正常数据或异常数据
+            const useNormalData = Math.random() > 0.5;
+            
+            // 生成模拟数据
+            let strideAssessment, leanAngle, verticalOscillation;
+            
+            if (useNormalData) {
+                // 正常数据
+                strideAssessment = '重心正下方';
+                leanAngle = (Math.random() * 5 + 5).toFixed(1); // 5-10度
+                verticalOscillation = (Math.random() * 5 + 3).toFixed(1); // 3-8厘米
+            } else {
+                // 异常数据
+                strideAssessment = Math.random() > 0.5 ? '偏前' : '偏后';
+                leanAngle = Math.random() > 0.5 ? (Math.random() * 5 + 10).toFixed(1) : (Math.random() * 5).toFixed(1); // <5度或>10度
+                verticalOscillation = (Math.random() * 5 + 8).toFixed(1); // >8厘米
+            }
+            
+            const reportData = {
+                strideAssessment: strideAssessment,
+                leanAngle: parseFloat(leanAngle),
+                verticalOscillation: parseFloat(verticalOscillation)
+            };
+            
+            // 更新报告卡片显示数据
+            document.getElementById('realtimeStride').textContent = reportData.strideAssessment;
+            document.getElementById('realtimeLeanAngle').innerHTML = reportData.leanAngle + '<span class="metric-unit">度</span>';
+            document.getElementById('realtimeVerticalOscillation').innerHTML = reportData.verticalOscillation + '<span class="metric-unit">厘米</span>';
+            
+            saveReport('realtime', reportData, true);
+            alert('🎬 开始录制\n\n即将启动摄像头进行跑步姿态捕捉\n请确保摄像头权限已开启\n\n✅ 录制完成！报告已保存。', '🎬');
+            
+            // 跳转到 Step 3
+            setTimeout(() => {
+                navigateTo('record-step3-page');
+            }, 500);
+        }
+
+        // 视频上传功能
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordTimer = null;
+        let recordSeconds = 0;
+        let stream = null;
+
+        // 进入录制页面时初始化摄像头
+        function initRecordPage() {
+            const videoElement = document.getElementById('recordVideo');
+            const placeholder = document.querySelector('#recordPreview .camera-placeholder');
+            
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } })
+                    .then(function(mediaStream) {
+                        stream = mediaStream;
+                        videoElement.srcObject = mediaStream;
+                        videoElement.style.display = 'block';
+                        if (placeholder) placeholder.style.display = 'none';
+                    })
+                    .catch(function(error) {
+                        console.error('摄像头访问失败:', error);
+                        alert('⚠️ 无法访问摄像头\n\n请确保已授予摄像头权限', '⚠️');
+                    });
+            }
+        }
+
+        // 开始录制
+        function startRecording2() {
+            if (!stream) {
+                alert('⚠️ 摄像头未初始化', '⚠️');
+                return;
+            }
+
+            recordedChunks = [];
+            const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+            
+            try {
+                mediaRecorder = new MediaRecorder(stream, options);
+            } catch (e) {
+                mediaRecorder = new MediaRecorder(stream);
+            }
+
+            mediaRecorder.ondataavailable = function(event) {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = function() {
+                console.log('录制停止');
+            };
+
+            mediaRecorder.start();
+            
+            // 显示控制按钮
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('pauseBtn').style.display = 'flex';
+            document.getElementById('stopBtn').style.display = 'flex';
+            
+            // 启动计时器
+            recordSeconds = 0;
+            recordTimer = setInterval(updateTimer, 1000);
+        }
+
+        // 暂停录制
+        function pauseRecording2() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.pause();
+                clearInterval(recordTimer);
+                
+                document.getElementById('pauseBtn').style.display = 'none';
+                document.getElementById('resumeBtn').style.display = 'flex';
+            }
+        }
+
+        // 继续录制
+        function resumeRecording2() {
+            if (mediaRecorder && mediaRecorder.state === 'paused') {
+                mediaRecorder.resume();
+                recordTimer = setInterval(updateTimer, 1000);
+                
+                document.getElementById('resumeBtn').style.display = 'none';
+                document.getElementById('pauseBtn').style.display = 'flex';
+            }
+        }
+
+        // 停止录制
+        function stopRecording2() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                clearInterval(recordTimer);
+                
+                document.getElementById('pauseBtn').style.display = 'none';
+                document.getElementById('resumeBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'none';
+                document.getElementById('saveBtn').style.display = 'flex';
+            }
+        }
+
+        // 保存录制视频
+        function saveRecording2() {
+            if (recordedChunks.length === 0) {
+                alert('⚠️ 没有录制内容', '⚠️');
+                return;
+            }
+
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const videoUrl = URL.createObjectURL(blob);
+            
+            // 保存到 localStorage
+            localStorage.setItem('kinetix_uploaded_video', JSON.stringify({
+                name: 'recording_' + Date.now() + '.webm',
+                size: blob.size,
+                url: videoUrl,
+                timestamp: Date.now()
+            }));
+            
+            // 停止所有轨道
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            alert('✅ 视频已保存！\n\n即将跳转到上传页面进行视频分析', '✅');
+            
+            // 跳转到上传页面
+            navigateTo('upload-page');
+            
+            // 更新上传页面的预览
+            setTimeout(() => {
+                const placeholder = document.getElementById('videoPlaceholder');
+                const videoPreview = document.getElementById('videoPreview');
+                
+                if (placeholder) placeholder.style.display = 'none';
+                if (videoPreview) {
+                    videoPreview.src = videoUrl;
+                    videoPreview.style.display = 'block';
+                    videoPreview.play();
+                }
+            }, 300);
+        }
+
+        // 更新计时器
+        function updateTimer() {
+            recordSeconds++;
+            const minutes = Math.floor(recordSeconds / 60);
+            const seconds = recordSeconds % 60;
+            const timerStr = 
+                (minutes < 10 ? '0' + minutes : minutes) + ':' +
+                (seconds < 10 ? '0' + seconds : seconds);
+            document.getElementById('recordTimer').textContent = timerStr;
+        }
+
+        // 页面导航
+        function navigateTo(pageId) {
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            const targetPage = document.getElementById(pageId);
+            if (targetPage) {
+                targetPage.classList.add('active');
+            } else {
+                console.error('Page not found:', pageId);
+                return;
+            }
+            
+            if (pageId === 'report-page') {
+                renderReportList();
+            }
+            
+            if (pageId === 'record-page') {
+                setTimeout(initRecordPage, 100);
+            }
+            
+            if (pageId === 'growth-page') {
+                setTimeout(renderGrowthPage, 100);
+            }
+        }
+
+        // 上传视频 Step 1 -> Step 2
+        function goToUploadStep2() {
+            const videoData = localStorage.getItem('kinetix_uploaded_video');
+            if (!videoData) {
+                alert('⚠️ 请先上传或拍摄视频', '⚠️');
+                return;
+            }
+            navigateTo('upload-step2-page');
+        }
+        function handleVideoUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                // 创建视频URL
+                const videoUrl = URL.createObjectURL(file);
+                
+                // 保存到 localStorage
+                localStorage.setItem('kinetix_uploaded_video', JSON.stringify({
+                    name: file.name,
+                    size: file.size,
+                    url: videoUrl,
+                    timestamp: Date.now()
+                }));
+                
+                // 更新预览区域 - 隐藏占位符，显示视频
+                const placeholder = document.getElementById('videoPlaceholder');
+                const videoPreview = document.getElementById('videoPreview');
+                
+                if (placeholder) placeholder.style.display = 'none';
+                if (videoPreview) {
+                    videoPreview.src = videoUrl;
+                    videoPreview.style.display = 'block';
+                    videoPreview.play();
+                }
+                
+                alert(`✅ 视频上传成功：${file.name}\n\n视频大小：${(file.size / 1024 / 1024).toFixed(2)} MB`, '✅');
+                
+                // 显示下一步按钮（如果之前隐藏的话）
+                const nextButton = document.querySelector('#upload-step1-page .action-btn-primary');
+                if (nextButton) {
+                    nextButton.style.display = 'block';
+                }
+            }
+        }
+
+        // 视频分析功能 - 调用后端 API
+        async function analyzeVideo() {
+            // 检查是否有上传的视频
+            const videoData = localStorage.getItem('kinetix_uploaded_video');
+            if (!videoData) {
+                alert('⚠️ 请先上传跑步视频！', '⚠️');
+                return;
+            }
+            
+            const videoInfo = JSON.parse(videoData);
+            
+            try {
+                // 显示加载状态
+                const analyzeBtn = document.querySelector('#upload-step2-page .start-button');
+                const originalText = analyzeBtn.innerHTML;
+                analyzeBtn.innerHTML = '⏳ 分析中...';
+                analyzeBtn.disabled = true;
+                
+                // 方案 1：如果视频已上传到后端（有 videoId）
+            if (videoInfo.videoId) {
+                console.log('📡 调用后端分析接口，videoId:', videoInfo.videoId);
+                // 进行视频分析（异步）
+                const analysisResult = await analyzeVideoFromBackend(videoInfo.videoId);
+                console.log('📊 后端返回分析结果:', analysisResult);
+                
+                // 保存 analysisId 到 localStorage
+                videoInfo.analysisId = analysisResult.analysisId;
+                localStorage.setItem('kinetix_uploaded_video', JSON.stringify(videoInfo));
+                
+                // 显示分析中弹窗（无按钮，不可关闭）
+                showAnalyzingModal();
+                
+                // 等待分析完成（模拟等待时间）
+                setTimeout(async () => {
+                    console.log('📡 获取报告详情，analysisId:', analysisResult.analysisId);
+                    // 获取报告详情
+                    const reportResult = await getReportFromBackend(analysisResult.analysisId);
+                    console.log('📊 后端返回报告详情:', reportResult);
+                    
+                    // 格式化数据
+                    const reportData = formatBackendMetrics(reportResult);
+                    console.log('🎨 格式化后的数据:', reportData);
+                    
+                    // 更新报告卡片显示
+                    updateReportDisplay(reportData);
+                    
+                    // 保存报告
+                    saveReport('upload', reportData, false);
+                    
+                    // 恢复按钮状态
+                    analyzeBtn.innerHTML = originalText;
+                    analyzeBtn.disabled = false;
+                    
+                    // 显示分析完成弹窗（带查看报告按钮）
+                    showAnalysisCompleteModal(() => {
+                        // 跳转到 Step 3
+                        navigateTo('upload-step3-page');
+                    });
+                }, 5000); // 等待 5 秒后获取报告
+            } 
+            // 方案 2：如果视频有 URL，先上传到后端
+            else if (videoInfo.url) {
+                console.log('📡 从 URL 加载视频文件:', videoInfo.url);
+                // 从 URL 加载视频文件
+                const response = await fetch(videoInfo.url);
+                const blob = await response.blob();
+                console.log('📦 视频文件大小:', blob.size, '字节');
+                
+                console.log('📡 上传视频到后端');
+                // 上传视频到后端
+                const uploadResult = await uploadVideoToBackend(blob);
+                console.log('✅ 上传成功，videoId:', uploadResult.videoId);
+                
+                // 保存到 localStorage
+                videoInfo.videoId = uploadResult.videoId;
+                localStorage.setItem('kinetix_uploaded_video', JSON.stringify(videoInfo));
+                
+                console.log('📡 调用后端分析接口，videoId:', uploadResult.videoId);
+                // 进行视频分析（异步）
+                const analysisResult = await analyzeVideoFromBackend(uploadResult.videoId);
+                console.log('📊 后端返回分析结果:', analysisResult);
+                
+                // 保存 analysisId 到 localStorage
+                videoInfo.analysisId = analysisResult.analysisId;
+                localStorage.setItem('kinetix_uploaded_video', JSON.stringify(videoInfo));
+                
+                // 显示分析中弹窗（无按钮，不可关闭）
+                showAnalyzingModal();
+                
+                // 等待分析完成（模拟等待时间）
+                setTimeout(async () => {
+                    console.log('📡 获取报告详情，analysisId:', analysisResult.analysisId);
+                    // 获取报告详情
+                    const reportResult = await getReportFromBackend(analysisResult.analysisId);
+                    console.log('📊 后端返回报告详情:', reportResult);
+                    
+                    // 格式化数据
+                    const reportData = formatBackendMetrics(reportResult);
+                    console.log('🎨 格式化后的数据:', reportData);
+                    
+                    // 更新报告卡片显示
+                    updateReportDisplay(reportData);
+                    
+                    // 保存报告
+                    saveReport('upload', reportData, false);
+                    
+                    // 恢复按钮状态
+                    analyzeBtn.innerHTML = originalText;
+                    analyzeBtn.disabled = false;
+                    
+                    // 显示分析完成弹窗（带查看报告按钮）
+                    showAnalysisCompleteModal(() => {
+                        // 跳转到 Step 3
+                        navigateTo('upload-step3-page');
+                    });
+                }, 5000); // 等待 5 秒后获取报告
+            }
+            // 方案 3：视频信息不完整
+            else {
+                console.error('❌ 视频信息不完整，无法进行分析');
+                alert('❌ 视频信息不完整\n\n请重新上传视频', '❌');
+                
+                // 恢复按钮状态
+                analyzeBtn.innerHTML = originalText;
+                analyzeBtn.disabled = false;
+            }
+                
+            } catch (error) {
+                console.error('分析失败:', error);
+                alert('❌ 分析失败\n\n' + error.message + '\n\n请检查网络连接或稍后重试', '❌');
+            } finally {
+                // 恢复按钮状态
+                const analyzeBtn = document.querySelector('#upload-step2-page .start-button');
+                analyzeBtn.innerHTML = '🧠 开始分析';
+                analyzeBtn.disabled = false;
+            }
+        }
+        
+        // 更新报告卡片显示
+        function updateReportDisplay(reportData) {
+            document.getElementById('reportStride').textContent = reportData.strideAssessment;
+            document.getElementById('reportLeanAngle').innerHTML = reportData.leanAngle + '<span class="metric-unit">度</span>';
+            document.getElementById('reportVerticalOscillation').innerHTML = reportData.verticalOscillation + '<span class="metric-unit">厘米</span>';
+        }
+
+        // 请求摄像头权限
+        async function requestCameraPermission() {
+            // 直接申请权限
+            requestCameraInPage();
+        }
+
+        // 在当前页面申请摄像头权限
+        function requestCameraInPage() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function(stream) {
+                        alert('✅ 摄像头权限已获取！\n\n您现在可以使用摄像头了。', '✅');
+                        stream.getTracks().forEach(track => track.stop());
+                    })
+                    .catch(function(error) {
+                        if (error.name === 'NotAllowedError') {
+                            alert('❌ 摄像头权限被拒绝\n\n请按照以下步骤开启权限：\n\n1. 打开系统设置\n2. 找到隐私/安全性设置\n3. 启用摄像头权限\n4. 刷新页面重试', '❌');
+                        } else {
+                            alert('⚠️ 访问摄像头时出错：' + error.message, '⚠️');
+                        }
+                    });
+            } else {
+                alert('⚠️ 您的浏览器不支持摄像头访问\n\n请使用现代浏览器（Chrome、Firefox、Safari）', '⚠️');
+            }
+        }
+
+        // 自定义弹窗函数
+        function showModal(options = {}) {
+            const {
+                icon = 'ℹ️',
+                title = '提示',
+                content = '',
+                confirmText = '确定',
+                cancelText = '取消',
+                showCancel = false,
+                onConfirm = null,
+                onCancel = null
+            } = options;
+
+            document.getElementById('modalIcon').textContent = icon;
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalContent').textContent = content;
+
+            const buttonsContainer = document.getElementById('modalButtons');
+            
+            if (showCancel) {
+                buttonsContainer.innerHTML = `
+                    <button class="modal-btn modal-btn-secondary" onclick="closeModal(false)">${cancelText}</button>
+                    <button class="modal-btn modal-btn-primary" onclick="closeModal(true)">${confirmText}</button>
+                `;
+                
+                // 存储回调函数
+                window.modalCallbacks = {
+                    onConfirm: onConfirm,
+                    onCancel: onCancel
+                };
+            } else {
+                buttonsContainer.innerHTML = `
+                    <button class="modal-btn modal-btn-single" onclick="closeModal()">${confirmText}</button>
+                `;
+                window.modalCallbacks = { onConfirm: onConfirm };
+            }
+
+            document.getElementById('customModal').classList.add('active');
+        }
+
+        function closeModal(confirmed = true) {
+            // 如果分析中弹窗处于激活状态，阻止关闭
+            if (isAnalyzingModalActive) {
+                return;
+            }
+            
+            document.getElementById('customModal').classList.remove('active');
+            
+            if (window.modalCallbacks) {
+                if (confirmed && window.modalCallbacks.onConfirm) {
+                    window.modalCallbacks.onConfirm();
+                } else if (!confirmed && window.modalCallbacks.onCancel) {
+                    window.modalCallbacks.onCancel();
+                }
+                window.modalCallbacks = null;
+            }
+        }
+
+        // 显示分析中弹窗（无按钮，不可关闭）
+        let isAnalyzingModalActive = false;
+        
+        function showAnalyzingModal() {
+            isAnalyzingModalActive = true;
+            document.getElementById('modalIcon').textContent = '🧠';
+            document.getElementById('modalTitle').textContent = '分析已开始';
+            document.getElementById('modalContent').textContent = '请稍等片刻，系统正在分析您的跑步视频...';
+            
+            // 不显示任何按钮
+            document.getElementById('modalButtons').innerHTML = '';
+            
+            document.getElementById('customModal').classList.add('active');
+        }
+        
+        // 显示分析完成弹窗（带查看报告按钮）
+        function showAnalysisCompleteModal(onViewReport) {
+            isAnalyzingModalActive = false; // 重置标志
+            
+            document.getElementById('modalIcon').textContent = '🧠';
+            document.getElementById('modalTitle').textContent = '分析完成';
+            document.getElementById('modalContent').textContent = '报告已生成并保存';
+            
+            document.getElementById('modalButtons').innerHTML = `
+                <button class="modal-btn modal-btn-primary" id="viewReportBtn">查看报告</button>
+            `;
+            
+            document.getElementById('viewReportBtn').addEventListener('click', () => {
+                isAnalyzingModalActive = false;
+                closeModal();
+                if (onViewReport) onViewReport();
+            });
+            
+            document.getElementById('customModal').classList.add('active');
+        }
+
+        // 重写 alert 函数
+        function alert(message, icon = 'ℹ️') {
+            const lines = message.split('\n');
+            const title = lines[0].replace(/[🎉✅⚠️❌💬📱⚙️]/g, '').trim();
+            const content = lines.slice(1).join('\n').trim() || message;
+            
+            showModal({
+                icon: icon,
+                title: title || '提示',
+                content: content,
+                showCancel: false
+            });
+        }
+
+        // 重写 confirm 函数
+        function confirm(message) {
+            return new Promise((resolve) => {
+                const lines = message.split('\n');
+                const title = lines[0].replace(/[🎉✅⚠️❌💬📱⚙️]/g, '').trim();
+                const content = lines.slice(1).join('\n').trim() || message;
+                
+                showModal({
+                    icon: '❓',
+                    title: title || '确认',
+                    content: content,
+                    showCancel: true,
+                    confirmText: '确定',
+                    cancelText: '取消',
+                    onConfirm: () => resolve(true),
+                    onCancel: () => resolve(false)
+                });
+            });
+        }
+
+        // 测试摄像头
+        function testCamera() {
+            const previewContainer = document.querySelector('#record-step1-page .camera-preview');
+            
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function(stream) {
+                        const video = document.createElement('video');
+                        video.srcObject = stream;
+                        video.autoplay = true;
+                        video.playsInline = true;
+                        video.style.width = '100%';
+                        video.style.height = '100%';
+                        video.style.objectFit = 'cover';
+                        
+                        previewContainer.innerHTML = '';
+                        previewContainer.appendChild(video);
+                        
+                        setTimeout(() => {
+                            stream.getTracks().forEach(track => track.stop());
+                            previewContainer.innerHTML = `
+                                <div class="camera-placeholder">
+                                    <div class="camera-placeholder-icon">📹</div>
+                                    <div class="camera-placeholder-text">摄像头测试完成</div>
+                                </div>
+                            `;
+                            alert('✅ 摄像头测试成功！\n\n摄像头工作正常。', '✅');
+                        }, 3000);
+                    })
+                    .catch(function(error) {
+                        alert('❌ 摄像头测试失败：' + error.message, '❌');
+                    });
+            } else {
+                alert('⚠️ 您的浏览器不支持摄像头访问', '⚠️');
+            }
+        }
+
+        // 保存跑步报告
+        function saveReport(type, data, isMock = false) {
+            let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+            const reportNumber = reports.length + 1;
+            const defaultName = type === 'upload' ? '视频分析' : '实时分析';
+            
+            // 使用后端返回的跑姿类型
+            let runType = data.runType || '待评估';
+            
+            // 从 suggestions 中提取跑姿类型
+            if (data.suggestions && Array.isArray(data.suggestions)) {
+                const runPoseSuggestion = data.suggestions.find(s => s.type === 'runPoseType' || s.type === 'runType');
+                if (runPoseSuggestion && runPoseSuggestion.content) {
+                    const runTypeMatch = runPoseSuggestion.content.match(/跑姿类型：([^-]+)/);
+                    if (runTypeMatch && runTypeMatch[1]) {
+                        runType = runTypeMatch[1].trim();
+                    }
+                }
+            }
+            
+            // 根据后端返回的跑姿类型确定图标
+            let professionalIcon;
+            if (runType.includes('理想') || runType.includes('经济')) {
+                professionalIcon = '✅';
+            } else if (runType.includes('失衡') || runType.includes('异常')) {
+                professionalIcon = '⚠️';
+            } else if (runType.includes('不稳')) {
+                professionalIcon = '❌';
+            } else {
+                professionalIcon = '📊';
+            }
+            
+            // 确定趣味模式图标
+            const userGender = localStorage.getItem('userGender') || 'male';
+            let funIcon;
+            if (runType.includes('理想') || runType.includes('经济')) {
+                funIcon = userGender === 'male' ? '🦸‍♂️' : '🦸‍♀️';
+            } else if (runType.includes('失衡') || runType.includes('异常')) {
+                funIcon = '🤡';
+            } else if (runType.includes('不稳')) {
+                funIcon = '🎭';
+            } else {
+                funIcon = '🏃‍♂️‍➡️';
+            }
+            
+            const newReport = {
+                id: Date.now(),
+                number: reportNumber,
+                name: `${defaultName} #${reportNumber}`,
+                type: type,
+                date: new Date().toLocaleString('zh-CN'),
+                timestamp: Date.now(),
+                data: data,
+                runType: runType,
+                professionalIcon: professionalIcon,
+                funIcon: funIcon,
+                isMock: isMock
+            };
+            reports.unshift(newReport);
+            localStorage.setItem('kinetix_reports', JSON.stringify(reports));
+            return newReport;
+        }
+
+        // 加载并渲染报告列表
+        function renderReportList() {
+            const reportList = document.getElementById('reportList');
+            let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+            
+            if (reports.length === 0) {
+                reportList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📭</div>
+                        <div class="empty-title">暂无分析记录</div>
+                        <div class="empty-desc">您还没有跑步分析记录<br>开始您的第一次跑步记录吧！</div>
+                        <div class="action-buttons">
+                            <button class="action-btn action-btn-primary" onclick="navigateTo('upload-page')">
+                                📹 上传视频分析
+                            </button>
+                            <button class="action-btn action-btn-secondary" onclick="navigateTo('record-page')">
+                                🏃 开始实时分析
+                            </button>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '';
+            reports.forEach((report, index) => {
+                const typeIcon = report.type === 'upload' ? '📹' : '🏃';
+                const typeName = report.type === 'upload' ? '视频分析' : '实时分析';
+                const reportNumber = reports.length - index;
+                
+                html += `
+                    <div class="report-item" onclick="viewReportDetail(${report.id})">
+                        <div class="report-actions">
+                            <button class="report-action-btn edit" onclick="editReportName(event, ${report.id})" title="编辑名称">
+                                ✏️
+                            </button>
+                            <button class="report-action-btn delete" onclick="deleteReport(event, ${report.id})" title="删除报告">
+                                🗑️
+                            </button>
+                        </div>
+                        <div class="report-header">
+                            <div class="report-type">
+                                <span class="report-type-icon">${typeIcon}</span>
+                                <span>${report.name || `${typeName} #${reportNumber}`}</span>
+                                ${report.isMock ? '<span class="report-mock-tag">模拟数据</span>' : '<span class="report-api-tag">API 分析</span>'}
+                            </div>
+                        </div>
+                        <div class="report-stats">
+                            <!-- 跑姿类型 -->
+                            <div class="report-stat-item full-width">
+                                <div class="report-stat-value">
+                                    ${(() => {
+                                        let runType = report.data.runType || report.runType || '暂无评估';
+                                        
+                                        // 从 suggestions 中提取跑姿类型
+                                        if (report.data.suggestions && Array.isArray(report.data.suggestions)) {
+                                            const runPoseSuggestion = report.data.suggestions.find(s => s.type === 'runPoseType' || s.type === 'runType');
+                                            if (runPoseSuggestion && runPoseSuggestion.content) {
+                                                const runTypeMatch = runPoseSuggestion.content.match(/跑姿类型：([^-]+)/);
+                                                if (runTypeMatch && runTypeMatch[1]) {
+                                                    runType = runTypeMatch[1].trim();
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 显示图标和跑姿类型
+                                        const icon = runType.includes('理想') || runType.includes('经济') ? '✅' : 
+                                                     runType.includes('失衡') || runType.includes('异常') ? '⚠️' : 
+                                                     runType.includes('不稳') ? '❌' : '📊';
+                                        
+                                        return `${icon} ${runType}`;
+                                    })()}
+                                </div>
+                                <div class="report-stat-label">跑姿类型</div>
+                            </div>
+                            
+                            <div class="report-stat-item full-width">
+                                <div class="report-stat-value">${report.data.strideAssessment ? (report.data.strideAssessment === '重心正下方' ? '✅' : '⚠️') + ' ' + report.data.strideAssessment.substring(0, 4) : '--'}</div>
+                                <div class="report-stat-label">步幅</div>
+                            </div>
+                            <div class="report-stats-row">
+                                <div class="report-stat-item">
+                                    <div class="report-stat-value">${report.data.leanAngle != null ? report.data.leanAngle : '--'}</div>
+                                    <div class="report-stat-label">前倾角度</div>
+                                </div>
+                                <div class="report-stat-item">
+                                    <div class="report-stat-value">${report.data.verticalOscillation != null ? report.data.verticalOscillation : '--'}</div>
+                                    <div class="report-stat-label">垂直振幅</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="report-date">${report.date}</div>
+                    </div>
+                `;
+            });
+            
+            reportList.innerHTML = html;
+        }
+
+        // 删除报告
+        function deleteReport(event, reportId) {
+            event.stopPropagation();
+            
+            const confirmed = confirm('❓ 确认删除\n\n确定要删除这条跑步记录吗？\n\n此操作无法撤销！');
+            
+            if (confirmed) {
+                let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+                reports = reports.filter(report => report.id !== reportId);
+                localStorage.setItem('kinetix_reports', JSON.stringify(reports));
+                
+                renderReportList();
+                
+                alert('✅ 删除成功\n\n记录已成功删除', '✅');
+            }
+        }
+
+        // 编辑报告名称
+        function editReportName(event, reportId) {
+            event.stopPropagation();
+            
+            let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+            const report = reports.find(r => r.id === reportId);
+            
+            if (!report) return;
+            
+            const currentName = report.name || '未命名报告';
+            
+            // 使用自定义弹窗
+            showModal({
+                icon: '✏️',
+                title: '修改报告名称',
+                content: '请输入新的报告名称：',
+                confirmText: '保存',
+                cancelText: '取消',
+                showCancel: true,
+                onConfirm: () => {
+                    const newName = document.getElementById('modalInput').value;
+                    if (newName && newName.trim() !== '') {
+                        report.name = newName.trim();
+                        localStorage.setItem('kinetix_reports', JSON.stringify(reports));
+                        renderReportList();
+                        
+                        alert('✅ 名称已更新\n\n报告名称已修改为：' + newName, '✅');
+                    }
+                }
+            });
+            
+            // 添加输入框
+            setTimeout(() => {
+                const modalContent = document.querySelector('.modal-content');
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.id = 'modalInput';
+                input.value = currentName;
+                input.style.width = '100%';
+                input.style.padding = '12px';
+                input.style.border = '1px solid #e5e7eb';
+                input.style.borderRadius = '8px';
+                input.style.fontSize = '15px';
+                input.style.marginTop = '12px';
+                input.style.boxSizing = 'border-box';
+                modalContent.appendChild(input);
+                
+                // 自动聚焦
+                input.focus();
+                input.select();
+                
+                // 回车确认
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        closeModal(true);
+                    }
+                });
+            }, 100);
+        }
+
+        // 查看报告详情
+        function viewReportDetail(reportId) {
+            let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+            const report = reports.find(r => r.id === reportId);
+            
+            if (!report) {
+                alert('❌ 报告不存在', '❌');
+                return;
+            }
+            
+            // 设置报告基本信息
+            const reportNumber = reports.findIndex(r => r.id === reportId) + 1;
+            document.getElementById('detailReportNumber').textContent = `报告 #${reportNumber}`;
+            document.getElementById('detailReportName').textContent = report.name || `报告 #${reportNumber}`;
+            document.getElementById('detailReportDate').textContent = report.date;
+            
+            // 设置跑步数据
+            const data = report.data;
+            document.getElementById('detailStride').textContent = data.strideAssessment || '--';
+            document.getElementById('detailLeanAngle').textContent = data.leanAngle != null ? data.leanAngle : '--';
+            document.getElementById('detailVerticalOscillation').textContent = data.verticalOscillation != null ? data.verticalOscillation : '--';
+            
+            // 生成数据评价
+            const strideComment = getStrideComment(data.strideAssessment);
+            const leanAngleComment = getLeanAngleComment(data.leanAngle);
+            const verticalOscillationComment = getVerticalOscillationComment(data.verticalOscillation);
+            
+            document.getElementById('detailStrideComment').textContent = strideComment;
+            document.getElementById('detailLeanAngleComment').textContent = leanAngleComment;
+            document.getElementById('detailVerticalOscillationComment').textContent = verticalOscillationComment;
+            
+            // 根据跑姿类型设置图标
+            const detailRunType = document.getElementById('detailRunType').textContent;
+            const iconElement = document.querySelector('.detail-metric-icon');
+            const funMode = document.getElementById('funMode')?.checked || false;
+            
+            // 使用保存的图标
+            if (report.professionalIcon && report.funIcon) {
+                if (funMode) {
+                    iconElement.textContent = report.funIcon;
+                } else {
+                    iconElement.textContent = report.professionalIcon;
+                }
+            } else {
+                // 兼容旧数据，动态生成图标
+                const professionalIcons = {
+                    '经济型跑姿': '✅',
+                    '重心不稳型': '❌',
+                    '姿态失衡型': '⚠️',
+                    '混合异常型': '🔄'
+                };
+                
+                const userGender = localStorage.getItem('userGender') || 'male';
+                const funIcons = {
+                    '经济型跑姿': userGender === 'male' ? ['👑', '🦸‍♂️'] : ['👑', '🦸‍♀️'],
+                    '重心不稳型': ['🤡', '👻', '🎭'],
+                    '姿态失衡型': userGender === 'male' ? ['🧙', '🧑‍🦯'] : ['🧙', '👩‍🦯'],
+                    '混合异常型': ['🔄', '🤯', '🧩']
+                };
+                
+                if (funMode) {
+                    let icon = '🏃‍♂️‍➡️';
+                    if (detailRunType === '姿态失衡型' || detailRunType.includes('姿态失衡')) {
+                        icon = funIcons['姿态失衡型'][Math.floor(Math.random() * funIcons['姿态失衡型'].length)];
+                    } else if (detailRunType === '重心不稳型' || detailRunType.includes('重心不稳')) {
+                        icon = funIcons['重心不稳型'][Math.floor(Math.random() * funIcons['重心不稳型'].length)];
+                    } else if (detailRunType === '经济型跑姿' || detailRunType.includes('经济型')) {
+                        icon = funIcons['经济型跑姿'][Math.floor(Math.random() * funIcons['经济型跑姿'].length)];
+                    } else if (detailRunType === '混合异常型' || detailRunType.includes('混合异常')) {
+                        icon = funIcons['混合异常型'][Math.floor(Math.random() * funIcons['混合异常型'].length)];
+                    }
+                    iconElement.textContent = icon;
+                } else {
+                    let icon = '🧙';
+                    if (detailRunType === '姿态失衡型' || detailRunType.includes('姿态失衡')) {
+                        icon = professionalIcons['姿态失衡型'];
+                    } else if (detailRunType === '重心不稳型' || detailRunType.includes('重心不稳')) {
+                        icon = professionalIcons['重心不稳型'];
+                    } else if (detailRunType === '经济型跑姿' || detailRunType.includes('经济型')) {
+                        icon = professionalIcons['经济型跑姿'];
+                    } else if (detailRunType === '混合异常型' || detailRunType.includes('混合异常')) {
+                        icon = professionalIcons['混合异常型'];
+                    }
+                    iconElement.textContent = icon;
+                }
+            }
+            
+            // 计算默认跑姿类型（根据数据分析结果）
+            let runType = '待评估';
+            let runAssessment = '等待分析完成';
+            
+            // 使用后端返回的评估结果
+            if (data.runType && data.assessment) {
+                runType = data.runType;
+                runAssessment = data.assessment;
+            } else if (data.strideAssessment && data.leanAngle && data.verticalOscillation) {
+                // 当没有后端返回的跑姿类型时，根据数据分析结果计算
+                if (data.strideAssessment === '重心正下方' && data.leanAngle >= 5 && data.leanAngle <= 10 && data.verticalOscillation < 8) {
+                    runType = '经济型跑姿';
+                    runAssessment = '各项指标优秀，跑步效率高';
+                } else {
+                    const issues = [];
+                    if (data.strideAssessment !== '重心正下方') issues.push('步幅');
+                    if (data.leanAngle < 5 || data.leanAngle > 10) issues.push('前倾角度');
+                    if (data.verticalOscillation >= 8) issues.push('垂直振幅');
+                    
+                    runType = '混合异常型';
+                    runAssessment = `存在以下问题：${issues.join('、')}，建议针对性改进`;
+                }
+            }
+            
+            document.getElementById('detailRunType').textContent = runType;
+            document.getElementById('detailRunAssessment').textContent = runAssessment;
+            
+            // 显示总体评价（新格式）
+            if (data.overallAssessment) {
+                document.getElementById('overallHealthyRate').textContent = data.healthyRate + '%';
+                document.getElementById('overallAssessmentText').textContent = data.overallAssessment;
+                document.getElementById('totalDataPoints').textContent = data.totalDataPoints || 0;
+                document.getElementById('analysisDuration').textContent = data.analysisDuration || 0;
+                document.getElementById('abnormalFrameCount').textContent = data.abnormalFrameCount || 0;
+            } else {
+                // 兼容旧格式
+                document.getElementById('overallHealthyRate').textContent = '--%';
+                document.getElementById('overallAssessmentText').textContent = '暂无总体评价';
+                document.getElementById('totalDataPoints').textContent = data.detailedData?.totalDataPoints || 0;
+                document.getElementById('analysisDuration').textContent = data.detailedData?.analysisDuration || 0;
+                document.getElementById('abnormalFrameCount').textContent = data.abnormalFrames?.length || 0;
+            }
+            
+            // 绘制图表
+            if (data.detailedData && data.detailedData.timeSeries) {
+                const chartsSection = document.getElementById('chartsSection');
+                chartsSection.style.display = 'block';
+                
+                // 延迟绘制以确保DOM已更新
+                setTimeout(() => {
+                    drawCharts(data.detailedData.timeSeries);
+                }, 100);
+            } else {
+                document.getElementById('chartsSection').style.display = 'none';
+            }
+            
+            // 显示异常帧数据
+            if (data.abnormalFrames && data.abnormalFrames.length > 0) {
+                const abnormalFramesSection = document.getElementById('abnormalFramesSection');
+                const detailAbnormalFrameList = document.getElementById('detailAbnormalFrameList');
+                
+                if (abnormalFramesSection && detailAbnormalFrameList) {
+                    abnormalFramesSection.style.display = 'block';
+                    detailAbnormalFrameList.innerHTML = '';
+                    
+                    data.abnormalFrames.forEach((frame, index) => {
+                        const frameElement = document.createElement('div');
+                        frameElement.style.cssText = `
+                            background: #fee2e2;
+                            border: 2px solid #ef4444;
+                            border-radius: 8px;
+                            overflow: hidden;
+                        `;
+                        
+                        let html = '';
+                        
+                        // 显示截图
+                        if (frame.screenshotBase64) {
+                            html += `<img src="data:image/jpeg;base64,${frame.screenshotBase64}" style="width: 100%; height: 100px; object-fit: cover;" />`;
+                        }
+                        
+                        // 显示数据
+                        html += `
+                            <div style="padding: 10px;">
+                                <div style="font-size: 12px; font-weight: bold; color: #ef4444; text-align: center; margin-bottom: 5px;">异常帧 #${index + 1}</div>
+                                <div style="font-size: 11px; color: #6b7280;">前倾：${frame.leanAngle}°</div>
+                                <div style="font-size: 11px; color: #6b7280;">垂直：${frame.verticalOscillation}cm</div>
+                                <div style="font-size: 11px; color: #6b7280;">左脚：${frame.leftStrideDistance}m</div>
+                                <div style="font-size: 11px; color: #6b7280;">右脚：${frame.rightStrideDistance}m</div>
+                                ${frame.healthIssues && frame.healthIssues.length > 0 ? `<div style="font-size: 10px; color: #ef4444; margin-top: 5px;">${frame.healthIssues.join(', ')}</div>` : ''}
+                            </div>
+                        `;
+                        
+                        frameElement.innerHTML = html;
+                        detailAbnormalFrameList.appendChild(frameElement);
+                    });
+                }
+            } else {
+                document.getElementById('abnormalFramesSection').style.display = 'none';
+            }
+            
+            // 生成并显示改进建议
+            const suggestions = generateAISuggestions(data);
+            renderSuggestions(suggestions);
+            
+            // 显示详细数据列表
+            if (data.detailedData && data.detailedData.allDataPoints && data.detailedData.allDataPoints.length > 0) {
+                const detailedDataSection = document.getElementById('detailedDataSection');
+                const detailedDataList = document.getElementById('detailedDataList');
+                
+                if (detailedDataSection && detailedDataList) {
+                    detailedDataSection.style.display = 'block';
+                    detailedDataList.innerHTML = '';
+                    
+                    const reversedData = [...data.detailedData.allDataPoints].reverse();
+                    reversedData.forEach((point, index) => {
+                        const dataPointElement = document.createElement('div');
+                        dataPointElement.style.cssText = `
+                            padding: 12px;
+                            background: ${point.isHealthy ? '#f0fdf4' : '#fef2f2'};
+                            border-left: 4px solid ${point.isHealthy ? '#10b981' : '#ef4444'};
+                            border-radius: 4px;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 6px;
+                        `;
+                        
+                        const timeLabel = `第 ${reversedData.length - index} 次评估`;
+                        
+                        dataPointElement.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="font-size: 12px; color: #6b7280;">${timeLabel}</div>
+                                <div style="font-size: 13px; font-weight: bold; color: ${point.isHealthy ? '#10b981' : '#ef4444'};">${point.isHealthy ? '健康' : '异常'}</div>
+                            </div>
+                            <div style="display: flex; gap: 15px; font-size: 13px;">
+                                <div style="color: #374151;">
+                                    <span style="color: #6b7280;">前倾：</span>${point.leanAngle}°
+                                </div>
+                                <div style="color: #374151;">
+                                    <span style="color: #6b7280;">垂直：</span>${point.verticalOscillation}cm
+                                </div>
+                            </div>
+                            ${point.voiceText ? `<div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${point.voiceText}</div>` : ''}
+                        `;
+                        
+                        detailedDataList.appendChild(dataPointElement);
+                    });
+                }
+            } else {
+                document.getElementById('detailedDataSection').style.display = 'none';
+            }
+            
+            // 添加模式切换事件监听器
+            const funModeSwitch = document.getElementById('funMode');
+            if (funModeSwitch) {
+                funModeSwitch.addEventListener('change', () => {
+                    // 重新设置图标
+                    const runType = document.getElementById('detailRunType').textContent;
+                    const iconElement = document.querySelector('.detail-metric-icon');
+                    const funMode = funModeSwitch.checked;
+                    
+                    // 专业模式图标
+                    const professionalIcons = {
+                        '理想经济型': '🏆',
+                        '过度前倾型': '🚨',
+                        '前倾不足型': '🚫',
+                        '大步刹车型': '🛑',
+                        '波动起伏型': '🎢',
+                        '低弹僵硬型': '🧊',
+                        '混合异常型': '🔄',
+                        '经济型跑姿': '🏆',
+                        '重心不稳型': '❌',
+                        '姿态失衡型': '⚠️'
+                    };
+                    
+                    // 获取用户性别（假设从 localStorage 获取）
+                    const userGender = localStorage.getItem('userGender') || 'male';
+                    
+                    // 趣味模式图标
+                    const funIcons = {
+                        '理想经济型': userGender === 'male' ? ['👑', '🦸‍♂️'] : ['👑', '🦸‍♀️'],
+                        '过度前倾型': ['🚀', '🏃‍♂️‍➡️', '🤸‍♂️'],
+                        '前倾不足型': ['🚶‍♂️', '🧍‍♂️', '🧘‍♂️'],
+                        '大步刹车型': ['🛑', '🚗‍♂️', '🦶‍♂️'],
+                        '波动起伏型': ['🎢', '🏂', '🤸‍♂️'],
+                        '低弹僵硬型': ['🧊', '💎', '🦴'],
+                        '混合异常型': ['🔄', '🤯', '🧩'],
+                        '经济型跑姿': userGender === 'male' ? ['👑', '🦸‍♂️'] : ['👑', '🦸‍♀️'],
+                        '重心不稳型': ['🤡', '👻', '🎭'],
+                        '姿态失衡型': userGender === 'male' ? ['🧙', '🧑‍🦯'] : ['🧙', '👩‍🦯']
+                    };
+                    
+                    // 重新设置图标
+                    if (funMode) {
+                        let icon = '🏃‍♂️‍➡️';
+                        if (runType === '姿态失衡型' || runType.includes('姿态失衡')) {
+                            icon = funIcons['姿态失衡型'][Math.floor(Math.random() * funIcons['姿态失衡型'].length)];
+                        } else if (runType === '重心不稳型' || runType.includes('重心不稳')) {
+                            icon = funIcons['重心不稳型'][Math.floor(Math.random() * funIcons['重心不稳型'].length)];
+                        } else if (runType === '经济型跑姿' || runType.includes('经济型')) {
+                            icon = funIcons['经济型跑姿'][Math.floor(Math.random() * funIcons['经济型跑姿'].length)];
+                        } else if (runType === '混合异常型' || runType.includes('混合异常')) {
+                            icon = funIcons['混合异常型'][Math.floor(Math.random() * funIcons['混合异常型'].length)];
+                        } else if (runType === '理想经济型' || runType.includes('理想经济')) {
+                            icon = funIcons['理想经济型'][Math.floor(Math.random() * funIcons['理想经济型'].length)];
+                        } else if (runType === '过度前倾型' || runType.includes('过度前倾')) {
+                            icon = funIcons['过度前倾型'][Math.floor(Math.random() * funIcons['过度前倾型'].length)];
+                        } else if (runType === '前倾不足型' || runType.includes('前倾不足')) {
+                            icon = funIcons['前倾不足型'][Math.floor(Math.random() * funIcons['前倾不足型'].length)];
+                        } else if (runType === '大步刹车型' || runType.includes('大步刹车')) {
+                            icon = funIcons['大步刹车型'][Math.floor(Math.random() * funIcons['大步刹车型'].length)];
+                        } else if (runType === '波动起伏型' || runType.includes('波动起伏')) {
+                            icon = funIcons['波动起伏型'][Math.floor(Math.random() * funIcons['波动起伏型'].length)];
+                        } else if (runType === '低弹僵硬型' || runType.includes('低弹僵硬')) {
+                            icon = funIcons['低弹僵硬型'][Math.floor(Math.random() * funIcons['低弹僵硬型'].length)];
+                        }
+                        iconElement.textContent = icon;
+                    } else {
+                        let icon = '🧙';
+                        if (runType === '姿态失衡型' || runType.includes('姿态失衡')) {
+                            icon = professionalIcons['姿态失衡型'];
+                        } else if (runType === '重心不稳型' || runType.includes('重心不稳')) {
+                            icon = professionalIcons['重心不稳型'];
+                        } else if (runType === '经济型跑姿' || runType.includes('经济型')) {
+                            icon = professionalIcons['经济型跑姿'];
+                        } else if (runType === '混合异常型' || runType.includes('混合异常')) {
+                            icon = professionalIcons['混合异常型'];
+                        } else if (runType === '理想经济型' || runType.includes('理想经济')) {
+                            icon = professionalIcons['理想经济型'];
+                        } else if (runType === '过度前倾型' || runType.includes('过度前倾')) {
+                            icon = professionalIcons['过度前倾型'];
+                        } else if (runType === '前倾不足型' || runType.includes('前倾不足')) {
+                            icon = professionalIcons['前倾不足型'];
+                        } else if (runType === '大步刹车型' || runType.includes('大步刹车')) {
+                            icon = professionalIcons['大步刹车型'];
+                        } else if (runType === '波动起伏型' || runType.includes('波动起伏')) {
+                            icon = professionalIcons['波动起伏型'];
+                        } else if (runType === '低弹僵硬型' || runType.includes('低弹僵硬')) {
+                            icon = professionalIcons['低弹僵硬型'];
+                        }
+                        iconElement.textContent = icon;
+                    }
+                });
+            }
+            
+            // 跳转到详情页
+            navigateTo('report-detail-page');
+        }
+        
+        // 绘制图表
+        function drawCharts(timeSeries) {
+            if (!timeSeries || !timeSeries.timestamps) return;
+            
+            const timestamps = timeSeries.timestamps;
+            const leanAngles = timeSeries.leanAngles;
+            const verticalOscillations = timeSeries.verticalOscillations;
+            const leftStrideDistances = timeSeries.leftStrideDistances;
+            const rightStrideDistances = timeSeries.rightStrideDistances;
+            const isHealthyList = timeSeries.isHealthyList;
+            
+            // 绘制前倾角度趋势图
+            drawLineChart('leanAngleChart', timestamps, leanAngles, '前倾角度 (°)', '#3b82f6', {
+                min: 0,
+                max: 20,
+                healthyMin: 5,
+                healthyMax: 15
+            }, isHealthyList);
+            
+            // 绘制垂直振幅趋势图
+            drawLineChart('verticalOscillationChart', timestamps, verticalOscillations, '垂直振幅 (cm)', '#10b981', {
+                min: 0,
+                max: 20,
+                healthyMin: 5,
+                healthyMax: 12
+            }, isHealthyList);
+            
+            // 绘制步幅趋势图
+            drawDualLineChart('strideChart', timestamps, leftStrideDistances, rightStrideDistances, '步幅 (m)', '#f59e0b', '#8b5cf6');
+        }
+        
+        // 绘制单线图
+        function drawLineChart(canvasId, timestamps, data, label, color, options, isHealthyList) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width = canvas.offsetWidth * 2;
+            const height = canvas.height = 400;
+            
+            ctx.clearRect(0, 0, width, height);
+            
+            const padding = { top: 40, right: 40, bottom: 60, left: 80 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+            
+            const min = options.min || Math.min(...data) - 1;
+            const max = options.max || Math.max(...data) + 1;
+            const range = max - min;
+            
+            // 绘制健康区域
+            if (options.healthyMin !== undefined && options.healthyMax !== undefined) {
+                const healthyMinY = padding.top + chartHeight - ((options.healthyMin - min) / range) * chartHeight;
+                const healthyMaxY = padding.top + chartHeight - ((options.healthyMax - min) / range) * chartHeight;
+                
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.1)';
+                ctx.fillRect(padding.left, healthyMaxY, chartWidth, healthyMinY - healthyMaxY);
+                
+                ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(padding.left, healthyMinY);
+                ctx.lineTo(width - padding.right, healthyMinY);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(padding.left, healthyMaxY);
+                ctx.lineTo(width - padding.right, healthyMaxY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // 标注健康范围
+                ctx.fillStyle = '#10b981';
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'right';
+                ctx.fillText(`健康范围: ${options.healthyMin}-${options.healthyMax}`, width - padding.right, healthyMaxY - 10);
+            }
+            
+            // 绘制坐标轴
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, padding.top);
+            ctx.lineTo(padding.left, height - padding.bottom);
+            ctx.lineTo(width - padding.right, height - padding.bottom);
+            ctx.stroke();
+            
+            // 绘制Y轴刻度
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'right';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const value = min + (range / ySteps) * i;
+                const y = padding.top + chartHeight - (i / ySteps) * chartHeight;
+                ctx.fillText(value.toFixed(1), padding.left - 10, y + 5);
+                
+                ctx.strokeStyle = '#f3f4f6';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+            }
+            
+            // 绘制X轴刻度
+            ctx.textAlign = 'center';
+            const xSteps = Math.min(timestamps.length, 10);
+            for (let i = 0; i < xSteps; i++) {
+                const index = Math.floor((i / (xSteps - 1)) * (timestamps.length - 1));
+                const x = padding.left + (index / (timestamps.length - 1)) * chartWidth;
+                ctx.fillText(`${timestamps[index]}s`, x, height - padding.bottom + 30);
+            }
+            
+            // 绘制数据线
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            
+            data.forEach((value, index) => {
+                const x = padding.left + (index / (data.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            ctx.stroke();
+            
+            // 绘制数据点
+            data.forEach((value, index) => {
+                const x = padding.left + (index / (data.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                const isHealthy = isHealthyList && isHealthyList[index];
+                ctx.fillStyle = isHealthy ? '#10b981' : '#ef4444';
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // 绘制标题
+            ctx.fillStyle = '#374151';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(label, padding.left, 25);
+        }
+        
+        // 绘制双线图
+        function drawDualLineChart(canvasId, timestamps, data1, data2, label, color1, color2) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width = canvas.offsetWidth * 2;
+            const height = canvas.height = 400;
+            
+            ctx.clearRect(0, 0, width, height);
+            
+            const padding = { top: 40, right: 40, bottom: 60, left: 80 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+            
+            const allData = [...data1, ...data2];
+            const min = Math.min(...allData) - 0.01;
+            const max = Math.max(...allData) + 0.01;
+            const range = max - min;
+            
+            // 绘制坐标轴
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, padding.top);
+            ctx.lineTo(padding.left, height - padding.bottom);
+            ctx.lineTo(width - padding.right, height - padding.bottom);
+            ctx.stroke();
+            
+            // 绘制Y轴刻度
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'right';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const value = min + (range / ySteps) * i;
+                const y = padding.top + chartHeight - (i / ySteps) * chartHeight;
+                ctx.fillText(value.toFixed(3), padding.left - 10, y + 5);
+                
+                ctx.strokeStyle = '#f3f4f6';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+            }
+            
+            // 绘制X轴刻度
+            ctx.textAlign = 'center';
+            const xSteps = Math.min(timestamps.length, 10);
+            for (let i = 0; i < xSteps; i++) {
+                const index = Math.floor((i / (xSteps - 1)) * (timestamps.length - 1));
+                const x = padding.left + (index / (timestamps.length - 1)) * chartWidth;
+                ctx.fillText(`${timestamps[index]}s`, x, height - padding.bottom + 30);
+            }
+            
+            // 绘制左脚数据线
+            ctx.strokeStyle = color1;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            
+            data1.forEach((value, index) => {
+                const x = padding.left + (index / (data1.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            ctx.stroke();
+            
+            // 绘制右脚数据线
+            ctx.strokeStyle = color2;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            
+            data2.forEach((value, index) => {
+                const x = padding.left + (index / (data2.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            ctx.stroke();
+            
+            // 绘制数据点
+            data1.forEach((value, index) => {
+                const x = padding.left + (index / (data1.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                ctx.fillStyle = color1;
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            data2.forEach((value, index) => {
+                const x = padding.left + (index / (data2.length - 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((value - min) / range) * chartHeight;
+                
+                ctx.fillStyle = color2;
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // 绘制标题
+            ctx.fillStyle = '#374151';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(label, padding.left, 25);
+            
+            // 绘制图例
+            const legendX = width - padding.right - 200;
+            const legendY = 25;
+            
+            ctx.fillStyle = color1;
+            ctx.fillRect(legendX, legendY - 10, 20, 10);
+            ctx.fillStyle = '#374151';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('左脚', legendX + 30, legendY);
+            
+            ctx.fillStyle = color2;
+            ctx.fillRect(legendX + 80, legendY - 10, 20, 10);
+            ctx.fillStyle = '#374151';
+            ctx.fillText('右脚', legendX + 110, legendY);
+        }
+        
+        // 步幅评价
+        function getStrideComment(strideAssessment) {
+            if (!strideAssessment) {
+                return '⚠️ 数据未获取';
+            }
+            if (strideAssessment === '重心正下方') {
+                return '✅ 步幅优秀，冲击力小';
+            } else if (strideAssessment.includes('偏前')) {
+                return '⚠️ 步幅偏前，易产生刹车效应';
+            } else if (strideAssessment.includes('偏后')) {
+                return '⚠️ 步幅偏后，建议调整';
+            } else {
+                return '⚠️ 步幅需改进';
+            }
+        }
+        
+        // 前倾角度评价
+        function getLeanAngleComment(leanAngle) {
+            if (leanAngle === undefined || leanAngle === null) {
+                return '⚠️ 数据未获取';
+            }
+            if (leanAngle >= 5 && leanAngle <= 10) {
+                return '✅ 前倾角度理想';
+            } else if (leanAngle > 10) {
+                return '⚠️ 前倾过大，注意躯干直立';
+            } else {
+                return '⚠️ 前倾不足，可略微前倾';
+            }
+        }
+        
+        // 垂直振幅评价
+        function getVerticalOscillationComment(verticalOscillation) {
+            if (verticalOscillation === undefined || verticalOscillation === null) {
+                return '⚠️ 数据未获取';
+            }
+            if (verticalOscillation < 8) {
+                return '✅ 垂直振幅优秀，跑步效率高';
+            } else {
+                return '⚠️ 垂直振幅偏大，浪费体力，尝试贴地飞行';
+            }
+        }
+        
+        // 生成 AI 改进建议（综合三项指标给出整体建议）
+        function generateAISuggestions(data) {
+            const suggestions = [];
+            const issues = [];
+            
+            // 分析步幅
+            if (data.strideAssessment === '重心正下方') {
+                suggestions.push({
+                    icon: '🏆',
+                    title: '步幅表现优秀',
+                    text: '落脚点位于身体重心正下方，冲击力小，跑步效率高\n• 保持当前步幅和步频的平衡\n• 继续维持良好的着地技术'
+                });
+            } else {
+                issues.push('步幅');
+                suggestions.push({
+                    icon: '🛑',
+                    title: '步幅需要改进',
+                    text: '当前落脚点位置不理想，建议：\n• 有意识地减小步幅，提高步频\n• 想象脚落在身体正下方\n• 进行步频训练（目标 170-180 步/分钟）\n• 避免过度跨步产生刹车效应'
+                });
+            }
+            
+            // 分析前倾角度
+            if (data.leanAngle >= 5 && data.leanAngle <= 10) {
+                suggestions.push({
+                    icon: '🏆',
+                    title: '前倾角度理想',
+                    text: '躯干前倾角度在 5-10 度理想范围内\n• 保持良好的身体姿态\n• 利用重力辅助前进\n• 注意核心肌群的稳定支撑'
+                });
+            } else if (data.leanAngle > 10) {
+                issues.push('前倾角度');
+                suggestions.push({
+                    icon: '🚨',
+                    title: '前倾角度过大',
+                    text: '当前前倾角度过大，建议：\n• 有意识地直立躯干，减小前倾\n• 加强核心肌群训练\n• 注意不要弯腰驼背\n• 目标：调整至 5-10 度范围'
+                });
+            } else {
+                issues.push('前倾角度');
+                suggestions.push({
+                    icon: '🚫',
+                    title: '前倾角度不足',
+                    text: '当前前倾角度偏小，建议：\n• 略微前倾躯干，利用重力辅助\n• 注意是从脚踝开始整体前倾，而非弯腰\n• 目标：调整至 5-10 度范围'
+                });
+            }
+            
+            // 分析垂直振幅
+            if (data.verticalOscillation < 8) {
+                suggestions.push({
+                    icon: '🏆',
+                    title: '垂直振幅优秀',
+                    text: '垂直振幅小于 8 厘米，跑步效率高，能量浪费少\n• 保持良好的贴地飞行技术\n• 继续维持稳定的重心高度\n• 注意避免过度压低重心影响步幅'
+                });
+            } else {
+                issues.push('垂直振幅');
+                suggestions.push({
+                    icon: '🎢',
+                    title: '垂直振幅偏大',
+                    text: '当前垂直振幅偏大，浪费体力，建议：\n• 想象头顶有天花板限制\n• 加强核心肌群控制，稳定重心\n• 提高步频，减小垂直波动\n• 目标：降低至 8 厘米以下'
+                });
+            }
+            
+            // 如果所有指标都优秀，添加综合表扬
+            if (issues.length === 0) {
+                suggestions.unshift({
+                    icon: '🏆',
+                    title: '综合表现优秀',
+                    text: '您的三项关键指标均处于理想范围！\n• 步幅、前倾角度、垂直振幅协调良好\n• 跑步效率高，能量利用充分\n• 建议：继续保持当前训练计划\n• 可以挑战更高强度的训练'
+                });
+            } else {
+                // 否则添加综合改进建议
+                suggestions.unshift({
+                    icon: '🔄',
+                    title: '综合改进建议',
+                    text: '根据分析，您需要重点关注：' + issues.join('、') + '\n\n建议训练计划：\n• 每周进行 2-3 次技术专项训练\n• 加强核心肌群力量（平板支撑、深蹲）\n• 进行步频训练（使用节拍器或音乐）\n• 录像自我观察，对比标准动作\n\n坚持训练 2-4 周后将看到明显改善！'
+                });
+            }
+            
+            return suggestions;
+        }
+        
+        // 渲染建议
+        function renderSuggestions(suggestions) {
+            const suggestionContainer = document.getElementById('detailSuggestionList');
+            
+            if (!suggestionContainer) {
+                console.warn('⚠️ 建议容器元素不存在');
+                return;
+            }
+            
+            if (suggestions.length === 0) {
+                suggestionContainer.innerHTML = '<div class="suggestion-placeholder">暂无建议</div>';
+                return;
+            }
+            
+            let html = '';
+            suggestions.forEach((suggestion, index) => {
+                html += `
+                    <div class="suggestion-item">
+                        <div class="suggestion-icon">${suggestion.icon}</div>
+                        <div class="suggestion-content">
+                            <div class="suggestion-title">${suggestion.title || ''}</div>
+                            <div class="suggestion-text">${suggestion.text}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            suggestionContainer.innerHTML = html;
+        }
+
+        // 计算默认跑姿类型（全局函数）
+        // 渲染成长档案页面
+        function renderGrowthPage() {
+            // 获取所有报告
+            let reports = JSON.parse(localStorage.getItem('kinetix_reports') || '[]');
+            
+            // 按时间倒序排序
+            reports.sort((a, b) => b.timestamp - a.timestamp);
+            
+            const emptyState = document.getElementById('growth-empty-state');
+            const chartsContainer = document.getElementById('growth-charts');
+            
+            // 检查报告数量
+            if (reports.length < 2) {
+                emptyState.style.display = 'block';
+                chartsContainer.style.display = 'none';
+                return;
+            }
+            
+            emptyState.style.display = 'none';
+            chartsContainer.style.display = 'block';
+            
+            // 准备数据
+            const dates = reports.map(r => {
+                const date = new Date(r.timestamp);
+                return `${date.getMonth() + 1}/${date.getDate()}`;
+            }).reverse();
+            
+            const leanAngles = reports.map(r => r.data?.leanAngle ?? 0).reverse();
+            const verticalOscillations = reports.map(r => r.data?.verticalOscillation ?? 0).reverse();
+            const strideAssessments = reports.map(r => r.data?.strideAssessment || '未知').reverse();
+            
+            console.log('📊 成长档案数据:', {
+                dates,
+                leanAngles,
+                verticalOscillations,
+                strideAssessments
+            });
+            
+            // 渲染图表
+            renderStrideChart(strideAssessments);
+            renderLeanAngleChart(dates, leanAngles);
+            renderVerticalOscillationChart(dates, verticalOscillations);
+            
+            // 检测并显示异常数据
+            displayAlerts(reports);
+            
+            // 生成 AI 反馈
+            generateAIFeedback(reports);
+        }
+        
+        // 渲染趋势折线图
+        let trendChartInstance = null;
+        function renderTrendChart(dates, leanAngles, verticalOscillations) {
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            
+            if (trendChartInstance) {
+                trendChartInstance.destroy();
+            }
+            
+            trendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        {
+                            label: '前倾角度 (度)',
+                            data: leanAngles,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: '垂直振幅 (厘米)',
+                            data: verticalOscillations,
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 渲染步幅落脚点图表
+        let strideChartInstance = null;
+        function renderStrideChart(strideAssessments) {
+            const canvas = document.getElementById('growth-strideChart');
+            if (!canvas) {
+                console.error('❌ growth-strideChart canvas 元素不存在');
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            
+            if (strideChartInstance) {
+                strideChartInstance.destroy();
+            }
+            
+            // 空数据处理
+            if (!strideAssessments || strideAssessments.length === 0) {
+                console.log('⚠️ 步幅评估数据为空');
+                return;
+            }
+            
+            // 准备图标数据
+            const data = strideAssessments.map(s => {
+                if (s === '重心正下方') return 1;
+                else if (s === '偏前') return 2;
+                else if (s === '偏后') return 3;
+                return 0;
+            });
+            
+            // 图标颜色
+            const backgroundColors = strideAssessments.map(s => {
+                if (s === '重心正下方') return 'rgba(34, 197, 94, 0.8)';
+                else if (s === '偏前') return 'rgba(239, 68, 68, 0.8)';
+                else if (s === '偏后') return 'rgba(245, 158, 11, 0.8)';
+                return 'rgba(156, 163, 175, 0.8)';
+            });
+            
+            // 计算数据行数和列数
+            const maxPerRow = 5;
+            const rows = Math.ceil(strideAssessments.length / maxPerRow);
+            const rowSpacing = 2.0; // 固定行间距（圆半径约 1.0，边缘间距为圆半径长度）
+            
+            // 准备数据点坐标
+            const dataPoints = data.map((value, index) => {
+                const row = Math.floor(index / maxPerRow);
+                const col = index % maxPerRow;
+                return { x: col, y: -row * rowSpacing };
+            });
+            
+            // 注册自定义插件
+            const drawReportNumberPlugin = {
+                id: 'drawReportNumber',
+                afterDatasetsDraw: function(chart) {
+                    const ctx = chart.ctx;
+                    chart.data.datasets[0].data.forEach(function(point, index) {
+                        const x = chart.scales.x.getPixelForValue(point.x);
+                        const y = chart.scales.y.getPixelForValue(point.y);
+                        
+                        // 绘制报告序号
+                        ctx.font = 'bold 12px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillText(index + 1, x, y);
+                    });
+                }
+            };
+            
+            strideChartInstance = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    labels: strideAssessments.map((s, i) => `第${i + 1}次`),
+                    datasets: [{
+                        label: '步幅评估',
+                        data: dataPoints,
+                        backgroundColor: backgroundColors,
+                        borderColor: backgroundColors.map(c => c.replace('0.8', '1')),
+                        borderWidth: 2,
+                        pointRadius: 15,
+                        pointStyle: strideAssessments.map(s => {
+                            return 'circle';
+                        })
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const index = context.dataIndex;
+                                    const s = strideAssessments[index];
+                                    if (s === '重心正下方') return '✅ 重心正下方（标准）';
+                                    else if (s === '偏前') return '⚠️ 落脚点偏前（需改进）';
+                                    else if (s === '偏后') return '⚠️ 落脚点偏后（需改进）';
+                                    return '❓ 未知状态';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            display: false,
+                            min: -rows * rowSpacing,
+                            max: 1.2
+                        },
+                        x: {
+                            display: false,
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                },
+                plugins: [drawReportNumberPlugin]
+            });
+        }
+        
+        // 渲染前倾角度图表
+        let leanAngleChartInstance = null;
+        function renderLeanAngleChart(dates, leanAngles) {
+            const canvas = document.getElementById('growth-leanAngleChart');
+            if (!canvas) {
+                console.error('❌ growth-leanAngleChart canvas 元素不存在');
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            
+            if (leanAngleChartInstance) {
+                leanAngleChartInstance.destroy();
+            }
+            
+            // 空数据处理
+            if (!leanAngles || leanAngles.length === 0) {
+                console.log('⚠️ 前倾角度数据为空');
+                return;
+            }
+            
+            // 标记异常数据
+            const pointColors = leanAngles.map(angle => 
+                (angle < 5 || angle > 10) ? 'rgba(239, 68, 68, 1)' : 'rgba(102, 126, 234, 1)'
+            );
+            
+            leanAngleChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        // 正常范围背景
+                        {
+                            label: '标准范围（5-10度）',
+                            data: dates.map(() => 5),
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            borderColor: 'rgba(34, 197, 94, 0.3)',
+                            borderWidth: 0,
+                            pointRadius: 0,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: '标准范围（5-10度）',
+                            data: dates.map(() => 10),
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            borderColor: 'rgba(34, 197, 94, 0.3)',
+                            borderWidth: 0,
+                            pointRadius: 0,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        // 前倾角度数据
+                        {
+                            label: '前倾角度 (度)',
+                            data: leanAngles,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            pointBackgroundColor: pointColors,
+                        pointBorderColor: pointColors,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                            tension: 0.4,
+                            fill: false,
+                            yAxisID: 'y'
+                        }
+                    ]
+                },
+                options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        aspectRatio: 2,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.raw;
+                                        if (value < 5) {
+                                            return `⚠️ ${value}度 - 前倾不足（标准：5-10 度）`;
+                                        } else if (value > 10) {
+                                            return `⚠️ ${value}度 - 前倾过大（标准：5-10 度）`;
+                                        } else {
+                                            return `✅ ${value}度 - 标准范围`;
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                min: 0,
+                                grid: {
+                                    color: 'rgba(0, 0, 0, 0.05)'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    display: false
+                                },
+                                offset: true,
+                                ticks: {
+                                    maxRotation: 0
+                                }
+                            }
+                        },
+                        animation: {
+                            onComplete: function() {
+                                // 滚动到最新数据
+                                const chart = this;
+                                const container = chart.canvas.parentElement;
+                                container.scrollLeft = container.scrollWidth - container.clientWidth;
+                            }
+                        }
+                    }
+            });
+        }
+        
+        // 渲染垂直振幅图表
+        let verticalOscillationChartInstance = null;
+        function renderVerticalOscillationChart(dates, verticalOscillations) {
+            const canvas = document.getElementById('growth-verticalOscillationChart');
+            if (!canvas) {
+                console.error('❌ growth-verticalOscillationChart canvas 元素不存在');
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            
+            if (verticalOscillationChartInstance) {
+                verticalOscillationChartInstance.destroy();
+            }
+            
+            // 空数据处理
+            if (!verticalOscillations || verticalOscillations.length === 0) {
+                console.log('⚠️ 垂直振幅数据为空');
+                return;
+            }
+            
+            // 标记异常数据
+            const pointColors = verticalOscillations.map(osc => 
+                osc >= 8 ? 'rgba(239, 68, 68, 1)' : 'rgba(34, 197, 94, 1)'
+            );
+            
+            verticalOscillationChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        // 正常范围背景
+                        {
+                            label: '标准范围（<8厘米）',
+                            data: dates.map(() => 8),
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            borderColor: 'rgba(34, 197, 94, 0.3)',
+                            borderWidth: 0,
+                            pointRadius: 0,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        // 垂直振幅数据
+                        {
+                            label: '垂直振幅 (厘米)',
+                            data: verticalOscillations,
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            pointBackgroundColor: pointColors,
+                            pointBorderColor: pointColors,
+                            pointRadius: 3,
+                            pointHoverRadius: 5,
+                            tension: 0.4,
+                            fill: false,
+                            yAxisID: 'y'
+                        }
+                    ]
+                },
+                options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        aspectRatio: 2,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.raw;
+                                        if (value >= 8) {
+                                            return `⚠️ ${value}厘米 - 振幅过大（标准：<8 厘米）`;
+                                        } else {
+                                            return `✅ ${value}厘米 - 标准范围`;
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(0, 0, 0, 0.05)'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    display: false
+                                },
+                                offset: true,
+                                ticks: {
+                                    maxRotation: 0
+                                }
+                            }
+                        },
+                        animation: {
+                            onComplete: function() {
+                                // 滚动到最新数据
+                                const chart = this;
+                                const container = chart.canvas.parentElement;
+                                container.scrollLeft = container.scrollWidth - container.clientWidth;
+                            }
+                        }
+                    }
+            });
+        }
+        
+        // 显示异常数据提醒
+        function displayAlerts(reports) {
+            const alertContainer = document.getElementById('growthAlerts');
+            const alertList = document.getElementById('growthAlertList');
+            
+            const alerts = [];
+            
+            reports.forEach((report, index) => {
+                const data = report.data;
+                const date = new Date(report.timestamp);
+                const dateStr = `${date.getMonth() + 1}/${date.getDate()}`;
+                
+                // 检查步幅
+                if (data.strideAssessment !== '重心正下方') {
+                    alerts.push({
+                        date: dateStr,
+                        type: '步幅',
+                        value: data.strideAssessment,
+                        standard: '重心正下方',
+                        suggestion: '落脚点偏离重心，易产生刹车效应'
+                    });
+                }
+                
+                // 检查前倾角度
+                if (data.leanAngle < 5) {
+                    alerts.push({
+                        date: dateStr,
+                        type: '前倾角度',
+                        value: `${data.leanAngle}度`,
+                        standard: '5-10 度',
+                        suggestion: '前倾不足，可略微增加前倾角度'
+                    });
+                } else if (data.leanAngle > 10) {
+                    alerts.push({
+                        date: dateStr,
+                        type: '前倾角度',
+                        value: `${data.leanAngle}度`,
+                        standard: '5-10 度',
+                        suggestion: '前倾过大，注意躯干直立，减小前倾'
+                    });
+                }
+                
+                // 检查垂直振幅
+                if (data.verticalOscillation >= 8) {
+                    alerts.push({
+                        date: dateStr,
+                        type: '垂直振幅',
+                        value: `${data.verticalOscillation}厘米`,
+                        standard: '<8 厘米',
+                        suggestion: '振幅过大，尝试贴地飞行，减小上下波动'
+                    });
+                }
+            });
+            
+            if (alerts.length > 0) {
+                alertContainer.style.display = 'block';
+                let html = '';
+                alerts.forEach(alert => {
+                    html += `
+                        <div class="growth-alert-item">
+                            <strong>${alert.date} - ${alert.type}：</strong>
+                            ${alert.value}（标准：${alert.standard}）<br>
+                            <span style="color: #92400e;">${alert.suggestion}</span>
+                        </div>
+                    `;
+                });
+                alertList.innerHTML = html;
+            } else {
+                alertContainer.style.display = 'none';
+            }
+        }
+        
+        // 生成 AI 反馈
+        async function generateAIFeedback(reports) {
+            const feedbackElement = document.getElementById('aiFeedback');
+            feedbackElement.textContent = '正在分析您的进步情况...';
+            
+            // 获取最近两次的报告
+            const latestReport = reports[0];
+            const previousReport = reports[1];
+            
+            // 计算改善情况
+            const improvements = [];
+            
+            // 前倾角度改善
+            const leanAngleDiff = previousReport.data.leanAngle - latestReport.data.leanAngle;
+            if (Math.abs(leanAngleDiff) >= 0.5) {
+                if (leanAngleDiff > 0 && latestReport.data.leanAngle >= 5 && latestReport.data.leanAngle <= 10) {
+                    improvements.push(`前倾角度优化了${leanAngleDiff.toFixed(1)}度，现在处于理想范围（5-10 度）`);
+                } else if (leanAngleDiff > 0) {
+                    improvements.push(`前倾角度减小了${leanAngleDiff.toFixed(1)}度`);
+                } else {
+                    improvements.push(`前倾角度增加了${Math.abs(leanAngleDiff).toFixed(1)}度`);
+                }
+            }
+            
+            // 垂直振幅改善
+            const verticalDiff = previousReport.data.verticalOscillation - latestReport.data.verticalOscillation;
+            if (verticalDiff > 0.5) {
+                improvements.push(`垂直振幅减小了${verticalDiff.toFixed(1)}厘米，进步明显！`);
+            } else if (verticalDiff < -0.5) {
+                improvements.push(`垂直振幅增加了${Math.abs(verticalDiff).toFixed(1)}厘米，需要注意控制`);
+            }
+            
+            // 步幅改善
+            if (previousReport.data.strideAssessment !== '重心正下方' && latestReport.data.strideAssessment === '重心正下方') {
+                improvements.push('步幅落脚点优化到重心正下方，非常好！');
+            } else if (previousReport.data.strideAssessment === '重心正下方' && latestReport.data.strideAssessment !== '重心正下方') {
+                improvements.push('步幅落脚点有所偏离，需要重新调整');
+            }
+            
+            // 生成反馈文案
+            let feedback = '';
+            if (improvements.length > 0) {
+                feedback = improvements.join('；') + '。';
+            } else {
+                feedback = '您的跑姿保持稳定，继续坚持训练！';
+            }
+            
+            // 添加鼓励语
+            const encouragements = [
+                '继续保持，您会越来越棒！💪',
+                '每一次训练都是进步，加油！🎉',
+                '坚持就是胜利，期待您更好的表现！🌟',
+                '您的努力不会白费，继续前进！🚀'
+            ];
+            feedback += ' ' + encouragements[Math.floor(Math.random() * encouragements.length)];
+            
+            feedbackElement.textContent = feedback;
+        }
+
+        // 打开用户信息弹窗
+        function openProfileModal() {
+            document.getElementById('nicknameInput').value = userData.nickname;
+            document.getElementById('nameInput').value = userData.name;
+            document.getElementById('ageInput').value = userData.age;
+            document.getElementById('genderInput').value = userData.gender;
+            
+            if (userData.avatar) {
+                document.getElementById('modalAvatarImage').src = userData.avatar;
+                document.getElementById('modalAvatarImage').style.display = 'block';
+                document.getElementById('modalAvatarPlaceholder').style.display = 'none';
+            } else {
+                document.getElementById('modalAvatarImage').style.display = 'none';
+                document.getElementById('modalAvatarPlaceholder').style.display = 'flex';
+            }
+            
+            document.getElementById('profileModal').classList.add('active');
+        }
+
+        // 关闭用户信息弹窗
+        function closeProfileModal() {
+            document.getElementById('profileModal').classList.remove('active');
+        }
+
+        // 处理头像更换
+        function handleAvatarChange(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    userData.avatar = e.target.result;
+                    
+                    // 更新弹窗中的头像预览
+                    document.getElementById('modalAvatarImage').src = userData.avatar;
+                    document.getElementById('modalAvatarImage').style.display = 'block';
+                    document.getElementById('modalAvatarPlaceholder').style.display = 'none';
+                    
+                    // 更新主页头像
+                    document.getElementById('avatarImage').src = userData.avatar;
+                    document.getElementById('avatarImage').style.display = 'block';
+                    document.getElementById('avatarPlaceholder').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // 保存用户信息
+        function saveProfile() {
+            userData.nickname = document.getElementById('nicknameInput').value || '用户';
+            userData.name = document.getElementById('nameInput').value;
+            userData.age = document.getElementById('ageInput').value;
+            userData.gender = document.getElementById('genderInput').value;
+
+            // 更新头像显示的文字
+            document.getElementById('avatarPlaceholder').textContent = userData.nickname.substring(0, 2);
+            document.getElementById('modalAvatarPlaceholder').textContent = userData.nickname.substring(0, 2);
+
+            // 保存到 localStorage
+            localStorage.setItem('kinetix_userData', JSON.stringify(userData));
+
+            closeProfileModal();
+        }
+
+        // 页面加载时恢复用户数据
+        window.onload = function() {
+            const savedData = localStorage.getItem('kinetix_userData');
+            if (savedData) {
+                userData = JSON.parse(savedData);
+                
+                if (userData.avatar) {
+                    document.getElementById('avatarImage').src = userData.avatar;
+                    document.getElementById('avatarImage').style.display = 'block';
+                    document.getElementById('avatarPlaceholder').style.display = 'none';
+                }
+                
+                document.getElementById('avatarPlaceholder').textContent = userData.nickname.substring(0, 2);
+            }
+            
+            // 初始化模式显示
+            updateModeDisplay();
+        };
+        
+        // 切换模式
+        function toggleMode() {
+            const funModeCheckbox = document.getElementById('funMode');
+            if (funModeCheckbox) {
+                const newMode = !funModeCheckbox.checked;
+                funModeCheckbox.checked = newMode;
+                updateModeDisplay();
+                
+                // 弹窗介绍功能
+                if (newMode) {
+                    alert('🎮 趣味模式\n\n在趣味模式中，您将看到更加生动有趣的图标和反馈，让跑步变得更加有趣！\n\n- 趣味图标：使用游戏角色图标代表不同的跑姿类型\n- 生动反馈：使用更加生动的语言描述您的跑姿\n- 轻松氛围：让跑步不再枯燥，变得更加有趣', '🎮');
+                } else {
+                    alert('📊 专业模式\n\n在专业模式中，您将看到更加专业的数据分析和反馈，帮助您提升跑步水平！\n\n- 专业图标：使用简洁的图标代表不同的跑姿类型\n- 详细分析：提供更加详细的数据分析和改进建议\n- 科学指导：基于专业知识提供科学的跑步指导', '📊');
+                }
+            }
+        }
+        
+        // 更新模式显示
+        function updateModeDisplay() {
+            const funModeCheckbox = document.getElementById('funMode');
+            const modeText = document.getElementById('modeText');
+            const modeIcon = document.querySelector('.mode-icon');
+            
+            if (funModeCheckbox && modeText && modeIcon) {
+                if (funModeCheckbox.checked) {
+                    modeText.textContent = '趣味模式';
+                    modeIcon.textContent = '🎮';
+                } else {
+                    modeText.textContent = '专业模式';
+                    modeIcon.textContent = '📊';
+                }
+            }
+        }
+
+        // 点击弹窗外部关闭
+        document.getElementById('profileModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeProfileModal();
+            }
+        });
+    </script>
+    <script src="api-config.js"></script>
+    <script src="api.js"></script>
+    <script src="realtime-video-analysis.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+    "request_id": "1234567890",
+    "timestamp": "2026-04-28T07:23:27Z",
+    "request_type": "get_lean_angle",
+    "parameters": {
+        "include_advanced_analysis": true,
+        "include_forward_lean_angle": true,
+        "include_lean_angle_degrees": true,
+        "include_assessment": true,
+        "include_recommendation": true
+    },
+    "required_fields": [
+        "leanAngle",
+        "forwardLeanAngle",
+        "advanced_analysis.forward_lean_angle.lean_angle_degrees",
+        "advanced_analysis.forward_lean_angle.assessment",
+        "advanced_analysis.forward_lean_angle.recommendation"
+    ]
+}

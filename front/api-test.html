@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KinetiX API 测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #1a1a2e;
+            margin-bottom: 10px;
+        }
+        
+        .desc {
+            color: #6b7280;
+            margin-bottom: 30px;
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .test-section h2 {
+            color: #1a1a2e;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        .test-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+        
+        .test-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .test-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .result pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 13px;
+            color: #374151;
+        }
+        
+        .success {
+            border-left: 4px solid #10b981;
+        }
+        
+        .error {
+            border-left: 4px solid #ef4444;
+        }
+        
+        .loading {
+            color: #667eea;
+            font-style: italic;
+        }
+        
+        .file-input {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 KinetiX API 测试工具</h1>
+        <p class="desc">用于测试后端 API 接口的连通性和数据格式</p>
+        
+        <!-- 视频上传测试 -->
+        <div class="test-section">
+            <h2>1. 视频上传接口</h2>
+            <p style="color: #6b7280; font-size: 14px; margin-bottom: 15px;">
+                接口：POST /upload/video
+            </p>
+            
+            <div class="file-input">
+                <input type="file" id="videoFile" accept="video/*" style="display: block; margin-bottom: 10px;">
+            </div>
+            
+            <button class="test-btn" onclick="testUploadVideo()" id="uploadBtn">
+                📤 测试上传
+            </button>
+            
+            <div class="result" id="uploadResult" style="display: none;"></div>
+        </div>
+        
+        <!-- 视频分析测试 -->
+        <div class="test-section">
+            <h2>2. 视频分析接口</h2>
+            <p style="color: #6b7280; font-size: 14px; margin-bottom: 15px;">
+                接口：POST /analyze/video
+            </p>
+            
+            <input type="text" id="videoIdInput" placeholder="输入视频 ID" 
+                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 15px;">
+            
+            <button class="test-btn" onclick="testAnalyzeVideo()" id="analyzeBtn">
+                🧠 测试分析
+            </button>
+            
+            <div class="result" id="analyzeResult" style="display: none;"></div>
+        </div>
+        
+        <!-- 获取报告测试 -->
+        <div class="test-section">
+            <h2>3. 获取报告接口</h2>
+            <p style="color: #6b7280; font-size: 14px; margin-bottom: 15px;">
+                接口：GET /report/{analysisId}
+            </p>
+            
+            <input type="text" id="analysisIdInput" placeholder="输入分析 ID" 
+                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 15px;">
+            
+            <button class="test-btn" onclick="testGetReport()" id="reportBtn">
+                📊 测试获取报告
+            </button>
+            
+            <div class="result" id="reportResult" style="display: none;"></div>
+        </div>
+        
+        <!-- 获取报告列表测试 -->
+        <div class="test-section">
+            <h2>4. 获取报告列表接口</h2>
+            <p style="color: #6b7280; font-size: 14px; margin-bottom: 15px;">
+                接口：GET /reports
+            </p>
+            
+            <button class="test-btn" onclick="testGetReportList()" id="listBtn">
+                📋 测试获取列表
+            </button>
+            
+            <div class="result" id="listResult" style="display: none;"></div>
+        </div>
+    </div>
+    
+    <script src="api.js"></script>
+    <script>
+        // 显示结果
+        function showResult(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.className = 'result ' + (isError ? 'error' : 'success');
+            element.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        }
+        
+        // 设置按钮加载状态
+        function setButtonLoading(btnId, loading) {
+            const btn = document.getElementById(btnId);
+            if (loading) {
+                btn.disabled = true;
+                btn.dataset.originalText = btn.innerText;
+                btn.innerText = '⏳ 加载中...';
+            } else {
+                btn.disabled = false;
+                btn.innerText = btn.dataset.originalText || btn.innerText;
+            }
+        }
+        
+        // 测试视频上传
+        async function testUploadVideo() {
+            const fileInput = document.getElementById('videoFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showResult('uploadResult', { error: '请选择视频文件' }, true);
+                return;
+            }
+            
+            setButtonLoading('uploadBtn', true);
+            
+            try {
+                const result = await uploadVideoToBackend(file);
+                showResult('uploadResult', result);
+                
+                // 自动填充视频 ID 到分析测试
+                document.getElementById('videoIdInput').value = result.videoId;
+            } catch (error) {
+                showResult('uploadResult', { error: error.message }, true);
+            } finally {
+                setButtonLoading('uploadBtn', false);
+            }
+        }
+        
+        // 测试视频分析
+        async function testAnalyzeVideo() {
+            const videoId = document.getElementById('videoIdInput').value;
+            
+            if (!videoId) {
+                showResult('analyzeResult', { error: '请输入视频 ID' }, true);
+                return;
+            }
+            
+            setButtonLoading('analyzeBtn', true);
+            
+            try {
+                const result = await analyzeVideoFromBackend(videoId);
+                showResult('analyzeResult', result);
+                
+                // 自动填充分析 ID 到报告测试
+                document.getElementById('analysisIdInput').value = result.analysisId;
+            } catch (error) {
+                showResult('analyzeResult', { error: error.message }, true);
+            } finally {
+                setButtonLoading('analyzeBtn', false);
+            }
+        }
+        
+        // 测试获取报告
+        async function testGetReport() {
+            const analysisId = document.getElementById('analysisIdInput').value;
+            
+            if (!analysisId) {
+                showResult('reportResult', { error: '请输入分析 ID' }, true);
+                return;
+            }
+            
+            setButtonLoading('reportBtn', true);
+            
+            try {
+                const result = await getReportFromBackend(analysisId);
+                showResult('reportResult', result);
+            } catch (error) {
+                showResult('reportResult', { error: error.message }, true);
+            } finally {
+                setButtonLoading('reportBtn', false);
+            }
+        }
+        
+        // 测试获取报告列表
+        async function testGetReportList() {
+            setButtonLoading('listBtn', true);
+            
+            try {
+                const result = await getReportListFromBackend(1, 20);
+                showResult('listResult', result);
+            } catch (error) {
+                showResult('listResult', { error: error.message }, true);
+            } finally {
+                setButtonLoading('listBtn', false);
+            }
+        }
+    </script>
+</body>
+</html>

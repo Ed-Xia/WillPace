@@ -1,0 +1,24 @@
+{
+    "request_id": "1234567890",
+    "timestamp": "2026-04-28T07:23:27Z",
+    "request_type": "get_realtime_analysis",
+    "parameters": {
+        "interval": 3000,
+        "include_stride_position": true,
+        "include_lean_angle": true,
+        "include_vertical_oscillation": true,
+        "include_abnormal_frames": true,
+        "include_voice_suggestions": true,
+        "include_assessment": true,
+        "include_recommendation": true
+    },
+    "required_fields": [
+        "strideAssessment",
+        "leanAngle",
+        "verticalOscillation",
+        "abnormalFrames",
+        "voiceSuggestions",
+        "assessment",
+        "recommendation"
+    ]
+}
