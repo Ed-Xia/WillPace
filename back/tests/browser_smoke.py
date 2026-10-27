@@ -34,6 +34,8 @@ def main():
         page.locator('#profile-form button[type=submit]').click()
         expect(page.locator('#account-label')).to_have_text('验收测试')
         page.locator('nav [data-page="analyze"]').click()
+        page.locator('#mode-chooser [data-mode="fine"]').click()
+        expect(page.locator('#capture-workspace')).to_be_visible()
         page.locator('#video-file').set_input_files(args.video)
         page.wait_for_function('document.getElementById("preview").readyState >= 2')
         page.locator('#quality-check').click()

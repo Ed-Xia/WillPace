@@ -11,7 +11,7 @@ import secrets
 import shutil
 import sqlite3
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +90,7 @@ class Service:
         self.store.recover_jobs()
         self.engine = engine
         self.queue = asyncio.Semaphore(1)
+        self.render_queue = asyncio.Semaphore(1)
         self.tasks = set()
         self.auth_attempts = defaultdict(deque)
         self.realtime_connections = 0
@@ -181,7 +182,7 @@ class Service:
         job = {'analysisId': analysis_id, 'videoId': video['videoId'], 'userId': user_id,
                'name': video['fileName'], 'status': 'queued', 'progress': 0,
                'stage': '等待分析', 'settings': config, 'createdAt': time.time(),
-               'reportType': 'realtime' if body.get('reportType') == 'realtime' else 'upload'}
+               'reportType': 'realtime' if body.get('reportType') == 'realtime' else 'upload', 'kind': 'analyze'}
         self.store.put('job', analysis_id, user_id, job)
         task = asyncio.create_task(self.run_job(job, video))
         self.tasks.add(task)
@@ -189,18 +190,27 @@ class Service:
         return result(job, status=202)
 
     async def run_job(self, job, video):
-        async with self.queue:
+        render = job.get('kind') == 'render'
+        async with (self.render_queue if render else self.queue):
             def progress(percent, stage, current=0, total=0):
                 job.update(status='processing', progress=round(percent, 1), stage=stage,
                            processedFrames=current, totalFrames=total)
                 self.store.put('job', job['analysisId'], job['userId'], job)
             try:
-                progress(1, '正在载入模型')
-                engine = self.engine
-                if engine is None:
-                    from analysis_engine import analyze_video
-                    engine = analyze_video
-                report = await asyncio.to_thread(engine, video['path'], self.store.root / job['analysisId'], job['settings'], progress)
+                progress(1, '正在载入录制视频' if render else '正在载入模型')
+                if render:
+                    from analysis_engine import render_realtime_video
+                    samples_path = Path(job.get('samplesPath', ''))
+                    if not samples_path.is_file():
+                        raise ValueError('实时录制数据已失效，请重新采集')
+                    report = await asyncio.to_thread(render_realtime_video, video['path'], samples_path,
+                                                     self.store.root / job['analysisId'], progress)
+                else:
+                    engine = self.engine
+                    if engine is None:
+                        from analysis_engine import analyze_video
+                        engine = analyze_video
+                    report = await asyncio.to_thread(engine, video['path'], self.store.root / job['analysisId'], job['settings'], progress)
                 report_id = secrets.token_hex(16)
                 report.update(reportId=report_id, analysisId=job['analysisId'], videoId=video['videoId'],
                               reportName=Path(video['fileName']).stem[:100], reportType=job['reportType'],
@@ -235,7 +245,8 @@ class Service:
 
     def public_report(self, report, summary=False):
         data = {k:v for k,v in report.items() if k != 'renderedPath' and (not summary or k not in ('timeSeries', 'events'))}
-        data['videoUrl'] = f'/api/report/{report["reportId"]}/media'
+        if report.get('renderedPath'):
+            data['videoUrl'] = f'/api/report/{report["reportId"]}/media'
         data['eventCount'] = len(report['events'])
         return data
 
@@ -248,14 +259,14 @@ class Service:
         report = self.owned(request, 'report', report_id)
         if request.method == 'DELETE':
             self.store.delete('report', report_id, request['user']['id'])
-            job = self.store.get('job', report['analysisId'], request['user']['id'])
+            job = self.store.get('job', report['analysisId'], request['user']['id']) if report.get('analysisId') else None
             if job:
                 self.store.delete('job', job['analysisId'], request['user']['id'])
             rendered = report.get('renderedPath')
             report_dir = Path(rendered).resolve().parent if rendered else None
             if report_dir and report_dir.is_relative_to(self.store.root):
                 shutil.rmtree(report_dir, ignore_errors=True)
-            video = self.store.get('video', report['videoId'], request['user']['id'])
+            video = self.store.get('video', report['videoId'], request['user']['id']) if report.get('videoId') else None
             if video and not any(j['videoId'] == video['videoId'] for j in self.store.list('job', request['user']['id'])):
                 self.store.delete('video', video['videoId'], request['user']['id'])
                 video_path = Path(video['path'])
@@ -272,6 +283,8 @@ class Service:
 
     async def media(self, request):
         report = self.owned(request, 'report', request.match_info['id'])
+        if not report.get('renderedPath'):
+            raise web.HTTPNotFound(reason='该报告没有回放视频')
         path = Path(report['renderedPath']).resolve()
         if not path.is_relative_to(self.store.root) or not path.is_file():
             raise web.HTTPNotFound(reason='视频文件不存在')
@@ -346,6 +359,190 @@ class Service:
             await ws.close()
         return ws
 
+    def drop_video(self, video, user_id):
+        if not video:
+            return
+        self.store.delete('video', video['videoId'], user_id)
+        path = Path(video['path'])
+        if path.is_relative_to(self.store.root):
+            path.unlink(missing_ok=True)
+
+    async def read_realtime_upload(self, request):
+        """Read a multipart realtime save: the synchronised recording plus a JSON payload."""
+        reader = await request.multipart()
+        fields, saved = {}, None
+        try:
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name == 'video':
+                    suffix = Path(part.filename or 'live.webm').suffix.lower()
+                    if suffix not in ('.mp4', '.mov', '.webm', '.avi', '.mkv', '.m4v'):
+                        raise ValueError('录制格式不受支持，请使用 WebM 或 MP4')
+                    video_id = secrets.token_hex(16)
+                    path = self.store.root / (video_id + suffix)
+                    size = 0
+                    async with aiofiles.open(path, 'wb') as file:
+                        while chunk := await part.read_chunk(1024 * 1024):
+                            size += len(chunk)
+                            if size > MAX_UPLOAD:
+                                raise ValueError('录制视频不能超过 200 MB')
+                            await file.write(chunk)
+                    if size == 0:
+                        raise ValueError('录制视频为空')
+                    saved = {'videoId': video_id, 'path': str(path),
+                             'fileName': (part.filename or '实时录制')[:200], 'fileSize': size}
+                    self.store.put('video', video_id, request['user']['id'], saved)
+                else:
+                    text = await part.text()
+                    if len(text) > 20 * 1024 * 1024:
+                        raise ValueError('实时分析数据过大')
+                    fields[part.name] = text
+        except BaseException:
+            self.drop_video(saved, request['user']['id'])
+            raise
+        if 'payload' not in fields:
+            self.drop_video(saved, request['user']['id'])
+            raise ValueError('缺少实时分析数据')
+        try:
+            body = json.loads(fields['payload'])
+        except json.JSONDecodeError:
+            self.drop_video(saved, request['user']['id'])
+            raise ValueError('实时分析数据格式无效')
+        return body, saved
+
+    def clean_snapshot(self, body, profile):
+        from analysis_engine import LABELS
+        raw_rows = body.get('rows')
+        if not isinstance(raw_rows, list) or not 1 <= len(raw_rows) <= 20000:
+            raise ValueError('没有可保存的实时抽帧数据，或数据条目过多')
+        keys = ('time', 'visibility', *LABELS)
+        rows = []
+        for raw in raw_rows:
+            if not isinstance(raw, dict):
+                raise ValueError('实时抽帧数据格式无效')
+            row = {}
+            for key in keys:
+                value = raw.get(key)
+                row[key] = (round(float(value), 4) if isinstance(value, (int, float))
+                            and not isinstance(value, bool) and math.isfinite(value) else None)
+            if row['time'] is None or not 0 <= row['time'] <= 86400:
+                raise ValueError('实时抽帧时间无效')
+            rows.append(row)
+        rows.sort(key=lambda row: row['time'])
+        config = settings(body.get('settings') or profile)
+        unknown = 'auto' in (config['view'], config['direction'])
+        config['view'] = 'side' if config['view'] == 'auto' else config['view']
+        config['direction'] = 'right' if config['direction'] == 'auto' else config['direction']
+        meta = body.get('quality') if isinstance(body.get('quality'), dict) else {}
+        counts = Counter()
+        issues = meta.get('issues') if isinstance(meta.get('issues'), dict) else {}
+        for message, count in issues.items():
+            if isinstance(message, str) and isinstance(count, (int, float)) and count > 0:
+                counts[message[:60]] += min(int(count), 100000)
+        total = len(rows)
+        try:
+            usable = min(max(int(meta.get('usableFrames', total)), 0), total)
+        except (TypeError, ValueError):
+            usable = total
+        duration = body.get('duration')
+        duration = float(duration) if isinstance(duration, (int, float)) and math.isfinite(duration) else rows[-1]['time']
+        duration = min(max(duration, 0), 86400)
+
+        def edge(key):
+            value = body.get(key)
+            return int(value) if isinstance(value, (int, float)) and 0 < value <= 8192 else 0
+        return rows, config, total, usable, counts, duration, edge('width'), edge('height'), unknown
+
+    def clean_samples(self, raw):
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 20000:
+            raise ValueError('缺少实时骨架关键点，无法生成骨架回放')
+        samples = []
+        for item in raw:
+            if not isinstance(item, dict):
+                raise ValueError('实时关键点格式无效')
+            timestamp, points = item.get('t'), item.get('p')
+            if (not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool)
+                    or not math.isfinite(timestamp) or not 0 <= timestamp <= 86400):
+                raise ValueError('实时关键点时间无效')
+            if not isinstance(points, list) or len(points) not in (0, 66):
+                raise ValueError('实时关键点数量无效')
+            clean = []
+            for value in points:
+                if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                        or not math.isfinite(value) or not -.5 <= value <= 1.5):
+                    raise ValueError('实时关键点坐标无效')
+                clean.append(round(float(value), 4))
+            visible = item.get('v') if item.get('v') is not None else []
+            if not isinstance(visible, list) or len(visible) not in (0, 33):
+                raise ValueError('实时关键点可见度无效')
+            clean_visible = []
+            for value in visible:
+                if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+                    raise ValueError('实时关键点可见度无效')
+                clean_visible.append(round(min(max(float(value), 0), 1), 3))
+            knees = item.get('k') if isinstance(item.get('k'), list) else []
+            clean_knees = [round(float(value), 1) if isinstance(value, (int, float))
+                           and not isinstance(value, bool) and math.isfinite(value) else None
+                           for value in knees[:2]]
+            samples.append({'t': round(float(timestamp), 3), 'p': clean, 'v': clean_visible, 'k': clean_knees})
+        samples.sort(key=lambda sample: sample['t'])
+        return samples
+
+    def start_render(self, request, upload, body, cleaned):
+        rows, config, total, usable, counts, duration, width, height, unknown = cleaned
+        samples = self.clean_samples(body.get('samples'))
+        user_id = request['user']['id']
+        if sum(j['status'] in ('queued', 'processing') for j in self.store.list('job', user_id)) >= 3:
+            self.drop_video(upload, user_id)
+            return result(message='最多同时提交 3 个任务，请等待当前任务完成', status=429)
+        analysis_id = secrets.token_hex(16)
+        directory = self.store.root / analysis_id
+        directory.mkdir(parents=True, exist_ok=True)
+        samples_path = directory / 'samples.json'
+        samples_path.write_text(json.dumps({
+            'rows': rows, 'samples': samples, 'quality': dict(counts), 'settings': config,
+            'duration': duration, 'width': width, 'height': height, 'unknown': unknown},
+            ensure_ascii=False, allow_nan=False), encoding='utf-8')
+        job = {'analysisId': analysis_id, 'videoId': upload['videoId'], 'userId': user_id,
+               'name': '实时分析 ' + datetime.now().strftime('%m-%d %H:%M'), 'status': 'queued',
+               'progress': 0, 'stage': '等待生成骨架回放', 'settings': config,
+               'createdAt': time.time(), 'reportType': 'realtime', 'kind': 'render',
+               'samplesPath': str(samples_path)}
+        self.store.put('job', analysis_id, user_id, job)
+        task = asyncio.create_task(self.run_job(job, upload))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return result(job, status=202)
+
+    async def save_realtime(self, request):
+        """Persist realtime samples; with a recording, queue a skeleton replay render."""
+        upload = None
+        if request.content_type.startswith('multipart/'):
+            body, upload = await self.read_realtime_upload(request)
+        else:
+            body = await request.json()
+        try:
+            cleaned = self.clean_snapshot(body, request['user']['profile'])
+            if upload:
+                return self.start_render(request, upload, body, cleaned)
+            rows, config, total, usable, counts, duration, width, height, unknown = cleaned
+            from analysis_engine import snapshot_report
+            report = snapshot_report(rows, counts, total, usable, config, duration, width, height)
+            if unknown:
+                report['suggestions'].append('本次未能自动判定拍摄视角或朝向，前倾与水平距离可能缺失；可手动指定视角和朝向后重新采集。')
+            report_id = secrets.token_hex(16)
+            report.update(reportId=report_id, analysisId=None, videoId=None, reportType='realtime',
+                          reportName='实时抽帧 ' + datetime.now().strftime('%m-%d %H:%M'),
+                          createTime=datetime.now(timezone.utc).isoformat(), fps=None,
+                          timeSeries=rows, settings=config)
+            self.store.put('report', report_id, request['user']['id'], report)
+            return result(self.public_report(report), status=201)
+        except BaseException:
+            self.drop_video(upload, request['user']['id'])
+            raise
+
     async def quality(self, request):
         import cv2
         import numpy as np
@@ -415,6 +612,7 @@ def create_app(data_dir=None, engine=None):
     routes.add_post('/api/analysis/{id}/retry', service.retry)
     routes.add_post('/api/quality/frame', service.quality)
     routes.add_get('/api/realtime/pose', service.realtime)
+    routes.add_post('/api/realtime/report', service.save_realtime)
     routes.add_get('/api/reports', service.reports)
     routes.add_get('/api/report/{id}', service.report)
     routes.add_delete('/api/report/{id}', service.report)

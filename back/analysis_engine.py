@@ -1,4 +1,5 @@
 """Frame-level measurements and whole-video aggregation; missing data stays null."""
+import json
 import math
 import subprocess
 from collections import Counter, deque
@@ -336,6 +337,118 @@ def summarize(rows, quality_counts, total, usable, settings):
                         'issues': [{'message': msg, 'frames': n} for msg, n in quality_counts.most_common()],
                         'scaleMethod': '手动身高标定' if settings.get('calibrationPixels') else '根据身高与入镜人体高度估计',
                         'note': '有效识别比例反映画面可用程度，不代表测量准确率；距离与振幅为单目估计。'}}
+
+
+def snapshot_report(rows, quality_counts, total, usable, settings, duration, width, height, has_video=False):
+    """Build a report from already-sampled realtime rows without re-analysis."""
+    report = summarize(rows, quality_counts, total, usable, settings)
+    if has_video:
+        note = ('本报告由实时分析数据直接生成：指标来自抽帧测量，骨架回放由同步录制画面叠加抽帧关键点合成，'
+                '未重新逐帧分析。')
+        tip = '骨架回放使用实时抽帧关键点，画面更新频率低于原视频；数值与曲线用于观察趋势，逐帧精度请使用“转为精细分析”。'
+    else:
+        note = '本报告保存实时分析中已采集的抽帧数据，未重新逐帧分析，也没有渲染骨架回放视频；抽帧密度低于精细分析。'
+        tip = '本报告由实时抽帧数据直接保存，数值与曲线用于观察趋势，不能替代精细分析。'
+    report['quality']['note'] = note + report['quality']['note']
+    report['quality']['source'] = 'realtime-snapshot'
+    report['suggestions'].insert(0, tip)
+    report.update(duration=round(duration, 3), width=width, height=height)
+    return report
+
+
+def draw_landmark_sample(frame, sample, size):
+    """Draw one sampled landmark set onto a rendered frame."""
+    points = sample.get('p') or []
+    if len(points) != 66:
+        return
+    visible = sample.get('v') or []
+    pixels = np.asarray(points, dtype=float).reshape(33, 2) * size
+
+    def shown(index):
+        return (not visible or visible[index] >= .6) and np.isfinite(pixels[index]).all()
+
+    for a, b in EDGES:
+        if shown(a) and shown(b):
+            cv2.line(frame, tuple(np.rint(pixels[a]).astype(int)),
+                     tuple(np.rint(pixels[b]).astype(int)), (100, 230, 40), 2)
+    knees = sample.get('k') or []
+    for index, slot in ((25, 0), (26, 1)):
+        value = knees[slot] if len(knees) > slot else None
+        if isinstance(value, (int, float)) and math.isfinite(value) and shown(index):
+            cv2.putText(frame, f'{value:.0f}', tuple(np.rint(pixels[index]).astype(int)),
+                        cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 220, 255), 1)
+
+
+def render_realtime_video(video_path, payload_path, output_dir, progress):
+    """Overlay sampled realtime landmarks on the synchronised recording; no pose re-analysis."""
+    payload = json.loads(Path(payload_path).read_text(encoding='utf-8'))
+    samples = payload.get('samples') or []
+    rows = payload.get('rows') or []
+    meta = payload.get('quality') or {}
+    active = payload.get('settings') or {}
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = output_dir / 'skeleton.avi'
+    cap = cv2.VideoCapture(str(video_path))
+    writer = None
+    try:
+        if not cap.isOpened():
+            raise ValueError('录制视频无法解码，请重新录制或使用精细分析')
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if not math.isfinite(fps) or not 1 <= fps <= 120:
+            fps = 30.0
+        width, height = int(cap.get(3)), int(cap.get(4))
+        if width <= 0 or height <= 0:
+            raise ValueError('录制视频尺寸无效')
+        ratio = min(1, 1280 / max(width, height))
+        render_size = (max(2, int(width * ratio) // 2 * 2), max(2, int(height * ratio) // 2 * 2))
+        writer = cv2.VideoWriter(str(raw_path), cv2.VideoWriter_fourcc(*'MJPG'), fps, render_size)
+        if not writer.isOpened():
+            raise ValueError('无法创建骨架视频')
+        expected = max(1, int(round(float(payload.get('duration') or 0) * fps)))
+        sample_index = frame_index = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            timestamp = frame_index / fps
+            while sample_index + 1 < len(samples) and samples[sample_index + 1]['t'] <= timestamp + .05:
+                sample_index += 1
+            rendered = cv2.resize(frame, render_size)
+            if samples:
+                sample = samples[min(sample_index, len(samples) - 1)]
+                if abs(sample['t'] - timestamp) <= .4:
+                    draw_landmark_sample(rendered, sample, render_size)
+            cv2.putText(rendered, f'{timestamp:.1f}s  REALTIME SNAPSHOT', (12, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, .55, (255, 255, 255), 2)
+            writer.write(rendered)
+            frame_index += 1
+            if frame_index % max(1, round(fps)) == 0:
+                progress(min(94, frame_index / expected * 94), '正在合成骨架回放', frame_index, expected)
+        if frame_index == 0:
+            raise ValueError('录制视频没有可解码画面')
+        writer.release()
+        writer = None
+        progress(96, '正在生成可回放视频', frame_index, expected)
+        import imageio_ffmpeg
+        final_path = output_dir / 'skeleton.mp4'
+        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-y', '-i', str(raw_path), '-an',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '24', '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart', str(final_path)], check=True, capture_output=True,
+                       timeout=180, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        raw_path.unlink(missing_ok=True)
+        report = snapshot_report(rows, Counter(meta.get('issues') or {}),
+                                 int(meta.get('totalFrames') or len(rows)),
+                                 int(meta.get('usableFrames') or 0),
+                                 active, frame_index / fps, width, height, has_video=True)
+        if payload.get('unknown'):
+            report['suggestions'].append('本次未能自动判定拍摄视角或朝向，前倾与水平距离可能缺失；可手动指定后重新采集。')
+        report.update(timeSeries=rows, settings=active, fps=round(fps, 2), renderedPath=str(final_path))
+        return report
+    finally:
+        cap.release()
+        if writer:
+            writer.release()
 
 
 def analyze_video(path, output_dir, settings, progress):

@@ -10,10 +10,15 @@ const metrics = {
 };
 const state = {user:null, reports:[], jobs:[], report:null, pair:null, file:null, fileURL:null,
   stream:null, recorder:null, live:false, recording:false, discardRecording:false, registering:false,
-  busy:false, page:'analyze', refreshBusy:false, authEpoch:0, calibration:[], polling:null};
+  busy:false, page:'analyze', refreshBusy:false, authEpoch:0, calibration:[], polling:null, mode:null};
+const MODES = {
+  realtime: {label:'实时分析', summary:'实时分析 · 抽帧传输，画面同步叠加骨架与指标，并同步录制画面供保存或转为精细分析。'},
+  fine: {label:'精细分析', summary:'精细分析 · 整段视频逐帧处理，完成后导出指标与骨架视频报告。'}
+};
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const valueText = (value, digits=1) => finite(value) ? value.toFixed(digits) : '无法评估';
 const dateText = value => new Date(value).toLocaleString('zh-CN', {hour12:false});
+const fileStamp = () => { const d=new Date(), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
 const baseURL = () => new URL(API_CONFIG.BASE_URL.replace(/\/$/, '') + '/', location.href);
 const apiURL = path => new URL(path.replace(/^\//, ''), baseURL()).href;
 const mediaURL = path => new URL(path, baseURL()).href;
@@ -43,6 +48,30 @@ function page(name) {
   if(name==='reports') renderReports();
   if(name==='growth') renderGrowth();
 }
+function selectMode(mode) {
+  if(mode!==null && !MODES[mode]) return;
+  if(mode!==state.mode) {
+    if(state.recording || state.live) throw new Error('请先结束录制或连续分段分析，再更换分析模式');
+    stopPoseAnalysis();
+  }
+  state.mode=mode;
+  $('mode-chooser').hidden=mode!==null;
+  $('capture-workspace').hidden=mode===null;
+  $('mode-pill').hidden=mode===null;
+  if(mode) { $('mode-pill').textContent=MODES[mode].label; $('mode-summary').textContent=MODES[mode].summary; }
+  $('fine-actions').hidden=mode!=='fine';
+  $('realtime-note').hidden=mode!=='realtime';
+  $('realtime-actions').hidden=mode!=='realtime';
+  $('live-start').hidden=mode!=='realtime' || state.live;
+  $('record-start').hidden=state.recording || mode!=='fine';
+  $('record-pause').hidden=true;
+  $('record-stop').hidden=!state.recording;
+  $('pose-panel').hidden=true;
+  if(mode==='realtime' && (state.stream || state.file)) startPoseAnalysis();
+  if(mode) $('quality-result').textContent=mode==='realtime'
+    ? '检查会提示入镜范围、关键点遮挡、亮度和拍摄角度；实时分析会自动开启。'
+    : '检查会提示入镜范围、关键点遮挡、亮度和拍摄角度；确认后点击“开始分析”。';
+}
 function profileToForms() {
   const p=state.user.profile;
   for(const prefix of ['capture','profile']) {
@@ -67,7 +96,7 @@ function resetAccount() {
   $('file-label').textContent='尚未选择视频'; $('video-file').value='';
   $('live-feedback').hidden=true; $('comparison').hidden=true;
   $('quality-result').textContent='登录后可检查画面质量。'; $('capture-pixels').value='';
-  $('calibration-panel').hidden=true; renderJobs(); renderReports(); populateCompare(); page('analyze');
+  $('calibration-panel').hidden=true; renderJobs(); renderReports(); populateCompare(); page('analyze'); selectMode(null); resetLiveBuffer(); discardLiveClip(); $('live-save-status').textContent='';
 }
 async function refresh() {
   if(!state.user || state.refreshBusy) return;
@@ -86,7 +115,7 @@ function renderJobs() {
 function renderReports() {
   const query=$('report-search').value.toLowerCase();
   const reports=state.reports.filter(r=>r.reportName.toLowerCase().includes(query));
-  $('reports').innerHTML=reports.length ? reports.map(r=>`<button class="report-card" data-report="${r.reportId}"><p class="eyebrow">${r.reportType==='realtime'?'CAMERA SESSION':'VIDEO ANALYSIS'} ${$('fun-mode').checked?'🏃':''}</p><h2>${esc(r.reportName)}</h2><p class="muted">${esc(dateText(r.createTime))} · ${r.duration} 秒</p><p>有效识别 ${(r.quality.validFrameRatio*100).toFixed(0)}% · ${r.quality.status==='insufficient'?'数据不足':`${r.eventCount} 个回看标记`}</p><div class="report-mini"><div><strong>${valueText(r.metrics.leanAngle)}</strong><span>前倾角度 °</span></div><div><strong>${valueText(r.metrics.verticalOscillation)}</strong><span>垂直振幅 cm</span></div></div></button>`).join('') : '<div class="empty">暂无匹配的报告。完成分析后，报告会自动保存在这里。</div>';
+  $('reports').innerHTML=reports.length ? reports.map(r=>`<button class="report-card" data-report="${r.reportId}"><p class="eyebrow">${r.quality?.source==='realtime-snapshot'?'REALTIME SNAPSHOT':r.reportType==='realtime'?'CAMERA SESSION':'VIDEO ANALYSIS'} ${$('fun-mode').checked?'🏃':''}</p><h2>${esc(r.reportName)}</h2><p class="muted">${esc(dateText(r.createTime))} · ${r.duration} 秒</p><p>有效识别 ${(r.quality.validFrameRatio*100).toFixed(0)}% · ${r.quality.status==='insufficient'?'数据不足':`${r.eventCount} 个回看标记`}</p><div class="report-mini"><div><strong>${valueText(r.metrics.leanAngle)}</strong><span>前倾角度 °</span></div><div><strong>${valueText(r.metrics.verticalOscillation)}</strong><span>垂直振幅 cm</span></div></div></button>`).join('') : '<div class="empty">暂无匹配的报告。完成分析后，报告会自动保存在这里。</div>';
 }
 function captureSettings() {
   const config={heightCm:Number($('capture-height').value),view:$('capture-view').value,direction:$('capture-direction').value,
@@ -114,7 +143,7 @@ async function chooseFile(file) {
   $('capture-pixels').value=''; $('calibration-panel').hidden=true;
   $('quality-result').textContent='可先播放到全身入镜的画面，再检查或标定。';
   preview.load();
-  const beginRealtime=()=>{$('preview').play().catch(()=>{}); startPoseAnalysis();};
+  const beginRealtime=()=>{$('preview').play().catch(()=>{}); if(state.mode==='realtime') startPoseAnalysis();};
   if(preview.readyState>=1) beginRealtime(); else preview.addEventListener('loadedmetadata',beginRealtime,{once:true});
 }
 function currentCanvas() {
@@ -146,11 +175,11 @@ async function openCamera() {
   state.stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'environment'},audio:false});
   state.file=null; const preview=$('preview'); preview.removeAttribute('src'); preview.srcObject=state.stream;
   preview.hidden=false; preview.controls=false; await preview.play();
-  $('camera-controls').hidden=false; $('camera-close').hidden=false; $('camera-open').hidden=true;
+  $('camera-controls').hidden=false; $('camera-close').hidden=false; $('camera-open').hidden=true; $('live-start').hidden=state.mode!=='realtime';
   $('file-label').textContent='摄像头已开启'; $('capture-pixels').value=''; $('calibration-panel').hidden=true;
   $('quality-result').textContent='请站到拍摄位置，点击“检查当前画面”。';
   state.stream.getVideoTracks()[0]?.addEventListener('ended',closeCamera,{once:true});
-  startPoseAnalysis();
+  if(state.mode==='realtime') startPoseAnalysis();
 }
 function closeCamera() {
   stopPoseAnalysis(); $('pose-panel').hidden=true;
@@ -167,13 +196,17 @@ function makeRecorder() {
   return new MediaRecorder(state.stream,{mimeType:mime});
 }
 function recordingUI(active) {
-  $('record-start').hidden=active; $('record-pause').hidden=!active || state.live; $('record-stop').hidden=!active;
-  $('live-start').hidden=active; $('record-pause').textContent='暂停录制';
+  $('record-start').hidden=active || state.mode!=='fine';
+  $('record-pause').hidden=!active || state.live || state.mode!=='fine';
+  $('record-stop').hidden=!active;
+  $('record-stop').textContent=state.live?'结束分段分析':'结束并分析';
+  $('live-start').hidden=active || state.mode!=='realtime';
   $('analyze-btn').disabled=active; $('video-file').disabled=active;
   if(!active) $('record-status').textContent='';
 }
 function recordFile(chunks,mime) { return new File(chunks,`摄像头-${new Date().toISOString().replace(/[:.]/g,'-')}.${mime.includes('mp4')?'mp4':'webm'}`,{type:mime}); }
 function startRecording() {
+  if(state.mode!=='fine') throw new Error('实时分析请使用“转为精细分析”或“连续分段分析”');
   if(!state.stream) throw new Error('请先打开摄像头');
   state.discardRecording=false; state.recording=true;
   const recorder=state.recorder=makeRecorder(), chunks=[];
@@ -193,7 +226,7 @@ function startRecording() {
 }
 async function liveAnalysis() {
   if(!state.stream) throw new Error('请先打开摄像头');
-  captureSettings(); state.live=true; state.discardRecording=false; recordingUI(true);
+  captureSettings(); state.live=true; recordingUI(true);
   $('live-feedback').hidden=false; $('live-feedback').textContent='每段录制约 3 秒，完成分析后开始下一段。';
   try {
     while(state.live && state.stream) {
@@ -226,6 +259,61 @@ async function liveAnalysis() {
   } finally { state.live=false; recordingUI(false); }
 }
 
+async function promoteToFine() {
+  if(!needUser()) return null;
+  if(!state.file && !state.stream) throw new Error('请先选择视频或打开摄像头');
+  if(state.live) throw new Error('请先结束连续分段分析，再转为精细分析');
+  if(state.stream) {
+    stopPoseAnalysis('已结束实时分析，正在转为精细分析…');
+    const clip=await stopLiveRecording();
+    if(!clip || clip.size<1000) {
+      selectMode('fine');
+      $('quality-result').textContent='录制时间太短，未得到可用视频；请在精细分析中点击“开始录制”。';
+      return null;
+    }
+    closeCamera();
+    const file=new File([clip],`实时分析-${fileStamp()}.${clip.type.includes('mp4')?'mp4':'webm'}`,{type:clip.type||'video/webm'});
+    clearLiveClip(); state.file=file;
+    if(state.fileURL) URL.revokeObjectURL(state.fileURL);
+    state.fileURL=URL.createObjectURL(file);
+    const preview=$('preview'); preview.srcObject=null; preview.src=state.fileURL;
+    preview.hidden=false; preview.controls=true; preview.load();
+    $('file-label').textContent=`${file.name} · ${(file.size/1024/1024).toFixed(1)} MB`;
+    $('capture-pixels').value=''; $('calibration-panel').hidden=true;
+    selectMode('fine');
+    await submitVideo(file,'realtime');
+    toast('已使用实时录制的视频提交精细分析，可在任务区查看进度');
+    return;
+  }
+  const file=state.file;
+  selectMode('fine');
+  return submitVideo(file,'upload').then(()=>toast('已转为精细分析，任务已提交，可在任务区查看进度'));
+}
+async function saveLiveAnalysis() {
+  if(!needUser()) return;
+  if(state.live) throw new Error('请先结束连续分段分析，再保存当前分析');
+  const snapshot=liveSnapshot();
+  if(!snapshot) throw new Error('实时分析数据还不足，请先开启实时分析并保持人体入镜');
+  $('save-live').disabled=true;
+  try {
+    stopPoseAnalysis('实时分析已结束，正在保存结果…');
+    const clip=await stopLiveRecording();
+    if(clip && clip.size>1000) {
+      const form=new FormData(), stamp=fileStamp();
+      form.append('payload',JSON.stringify(snapshot));
+      form.append('video',clip,`实时分析-${stamp}.${clip.type.includes('mp4')?'mp4':'webm'}`);
+      await api('realtime/report',{method:'POST',body:form});
+      $('live-save-status').textContent='已提交，正在合成骨架回放视频…';
+      toast('已提交，报告生成后会出现在“分析报告”中');
+    } else {
+      const report=await api('realtime/report',{method:'POST',body:snapshot});
+      $('live-save-status').textContent=`已保存 ${snapshot.rows.length} 帧抽帧数据`;
+      toast(`已保存报告“${report.reportName}”，可在分析报告中查看`);
+    }
+    resetLiveBuffer(); clearLiveClip(); await refresh();
+  } finally { $('save-live').disabled=false; }
+}
+
 function chart(container, series, {duration=1, label='', normalized=false, selected=null, onSeek=null, tickLabels=null}={}) {
   const width=640,height=250,left=52,right=18,top=20,bottom=40,pw=width-left-right,ph=height-top-bottom;
   const values=series.flatMap(s=>s.points.map(p=>p.y)).filter(finite);
@@ -237,7 +325,8 @@ function chart(container, series, {duration=1, label='', normalized=false, selec
   for(let i=0;i<5;i++) { const v=low+(high-low)*i/4,yy=y(v); svg+=`<line x1="${left}" x2="${width-right}" y1="${yy}" y2="${yy}" stroke="#e7ece8"/><text x="${left-8}" y="${yy+4}" text-anchor="end" fill="#7b8d83" font-size="11">${v.toFixed(1)}</text>`; }
   for(let i=0;i<=4;i++) { const xx=x(duration*i/4); const text=tickLabels ? tickLabels[Math.round((tickLabels.length-1)*i/4)] : `${(duration*i/4).toFixed(normalized?0:1)}${normalized?'%':'s'}`; svg+=`<text x="${xx}" y="${height-13}" text-anchor="middle" fill="#7b8d83" font-size="11">${esc(text)}</text>`; }
   for(const s of series) { let path='',connected=false; for(const p of s.points) { if(!finite(p.y)) { connected=false;continue; } path+=`${connected?'L':'M'}${x(p.x).toFixed(2)},${y(p.y).toFixed(2)} `; connected=true; } svg+=`<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2"/>`; if(s.points.filter(p=>finite(p.y)).length===1) {const p=s.points.find(p=>finite(p.y));svg+=`<circle cx="${x(p.x)}" cy="${y(p.y)}" r="4" fill="${s.color}"/>`;} }
-  svg+=`<line class="play-cursor" x1="${x(selected||0)}" x2="${x(selected||0)}" y1="${top}" y2="${top+ph}" stroke="#d39947" stroke-width="1.5" stroke-dasharray="4 3"/></svg>`;
+  if(onSeek) svg+=`<line class="play-cursor" x1="${x(selected||0)}" x2="${x(selected||0)}" y1="${top}" y2="${top+ph}" stroke="#d39947" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+  svg+='</svg>';
   container.innerHTML=svg;
   if(onSeek) container.querySelector('svg').onclick=e=>{ const rect=e.currentTarget.getBoundingClientRect();onSeek(Math.max(0,Math.min(duration,((e.clientX-rect.left)/rect.width*width-left)/pw*duration))); };
 }
@@ -252,26 +341,33 @@ async function openReport(id) {
   $('detail-quality').textContent=`${q.status==='insufficient'?'无法评估':'全片有效数据汇总'} · 有效识别 ${(q.validFrameRatio*100).toFixed(0)}%（${q.validFrames}/${q.totalFrames} 帧）。${q.note}`;
   $('detail-metrics').innerHTML=['leanAngle','verticalOscillation','cadence','leftKnee'].map(key=>`<div class="metric"><span>${metrics[key][0]}</span><strong>${valueText(report.metrics[key])}<small>${finite(report.metrics[key])?metrics[key][1]:''}</small></strong></div>`).join('');
   for(const kind of ['pdf','csv']) $('export-'+kind).href=apiURL(`report/${id}/export/${kind}`);
-  $('export-video').href=apiURL(`report/${id}/media?download=1`);
-  $('report-video').src=mediaURL(report.videoUrl); $('report-video').playbackRate=Number($('playback-speed').value);
-  $('timeline').max=report.duration; $('timeline').value=0;
+  const hasVideo=!!report.videoUrl;
+  $('export-video').hidden=!hasVideo;
+  $('export-video').href=hasVideo?apiURL(`report/${id}/media?download=1`):'#';
+  $('report-video').hidden=!hasVideo; $('detail-video-note').hidden=hasVideo;
+  $('playback-controls').hidden=!hasVideo; $('current-joints').hidden=!hasVideo;
+  $('chart-hint').textContent=hasVideo?'点击曲线定位画面，或拖动左侧时间轴。空白段表示识别不足。':'抽帧报告的曲线不可定位画面；空白段表示识别不足。';
+  if(hasVideo) { $('report-video').src=mediaURL(report.videoUrl); $('report-video').playbackRate=Number($('playback-speed').value); }
+  else { $('report-video').pause(); $('report-video').removeAttribute('src'); $('report-video').load(); }
+  $('timeline').max=report.duration||1; $('timeline').value=0;
   $('detail-suggestions').innerHTML=report.suggestions.map(s=>`<p>${esc(s)}</p>`).join('');
   const sideInfo=report.settings.view==='side'?` · 朝${report.settings.direction==='right'?'右':'左'}`:'';
   $('detail-settings').innerHTML=`<p>身高 ${report.settings.heightCm} cm · ${report.settings.view==='side'?'侧面':'正面'}${sideInfo} · ${esc(q.scaleMethod)}</p>${q.issues.map(i=>`<p>${esc(i.message)}：${i.frames} 帧</p>`).join('')}<p>脚相对髋部距离是有正负号的水平位置，不等同于落地步长；关节角度为三点夹角。</p>`;
   $('detail-events').innerHTML=report.events.length?report.events.map(e=>`<button data-time="${e.time}">${e.time.toFixed(1)}s · ${esc(e.issues.join('、'))}</button>`).join(''):'<p class="muted small">当前报告没有可用的异常标记。</p>';
   renderDetailChart(); updatePlayback(); page('detail'); window.scrollTo({top:0,behavior:'smooth'});
 }
-function renderDetailChart() { if(!state.report) return; const key=$('detail-metric').value,r=state.report;chart($('detail-chart'),[{color:'#276c50',points:r.timeSeries.map(p=>({x:p.time,y:p[key]}))}],{duration:r.duration,label:metrics[key][0],selected:$('report-video').currentTime,onSeek:seekReport}); }
+function renderDetailChart() { if(!state.report) return; const key=$('detail-metric').value,r=state.report;chart($('detail-chart'),[{color:'#276c50',points:r.timeSeries.map(p=>({x:p.time,y:p[key]}))}],{duration:r.duration,label:metrics[key][0],selected:$('report-video').currentTime,onSeek:r.videoUrl?seekReport:null}); }
 function seekReport(time) { $('report-video').currentTime=time; updatePlayback(); }
 function updatePlayback() {
-  const r=state.report;if(!r)return;const time=$('report-video').currentTime || 0;
+  const r=state.report;if(!r||!r.videoUrl)return;const time=$('report-video').currentTime || 0;
   $('timeline').value=time; $('playback-time').textContent=`${time.toFixed(1)} / ${r.duration.toFixed(1)} 秒`; setCursor($('detail-chart'),time,r.duration);
   const row=r.timeSeries.reduce((best,p)=>!best||Math.abs(p.time-time)<Math.abs(best.time-time)?p:best,null);
   $('current-joints').innerHTML=['leftKnee','rightKnee','leftHip','rightHip','leftAnkle','rightAnkle'].map(key=>`<span>${metrics[key][0]}：${valueText(row?.[key])}${finite(row?.[key])?'°':''}</span>`).join('');
 }
 function populateCompare() {
-  for(const id of ['compare-a','compare-b']) {const previous=$(id).value;$(id).innerHTML=state.reports.map(r=>`<option value="${r.reportId}">${esc(r.reportName)} · ${esc(dateText(r.createTime))}</option>`).join(''); if(state.reports.some(r=>r.reportId===previous)) $(id).value=previous;}
-  if($('compare-a').value===$('compare-b').value && state.reports.length>1) $('compare-b').selectedIndex=1;
+  const reports=state.reports.filter(r=>r.videoUrl);
+  for(const id of ['compare-a','compare-b']) {const previous=$(id).value;$(id).innerHTML=reports.map(r=>`<option value="${r.reportId}">${esc(r.reportName)} · ${esc(dateText(r.createTime))}</option>`).join(''); if(reports.some(r=>r.reportId===previous)) $(id).value=previous;}
+  if($('compare-a').value===$('compare-b').value && reports.length>1) $('compare-b').selectedIndex=1;
 }
 async function compare() {
   if(!needUser())return;
@@ -282,8 +378,10 @@ async function compare() {
   $('compare-title-a').textContent='A · '+ra.reportName;$('compare-title-b').textContent='B · '+rb.reportName;
   $('compare-video-a').src=mediaURL(ra.videoUrl);$('compare-video-b').src=mediaURL(rb.videoUrl);
   const different=['heightCm','view','direction'].some(k=>ra.settings[k]!==rb.settings[k]) || ra.quality.scaleMethod!==rb.quality.scaleMethod;
-  $('compare-warning').classList.toggle('warning',different);
-  $('compare-warning').textContent=different?'两次采集的身高、视角、方向或标定方法不同，差值只作观察，请优先比较同条件视频。':'采集参数一致。不同速度、镜头距离和标定误差仍可能影响差值。';
+  const snapshot=[ra,rb].some(r=>r.quality.source==='realtime-snapshot');
+  $('compare-warning').classList.toggle('warning',different||snapshot);
+  $('compare-warning').textContent=(snapshot?'包含实时抽帧报告，采样精度和画面流畅度低于精细分析。':'')+
+    (different?'两次采集的身高、视角、方向或标定方法不同，差值只作观察，请优先比较同条件视频。':'采集参数一致。不同速度、镜头距离和标定误差仍可能影响差值。');
   $('compare-table').innerHTML='<thead><tr><th>指标</th><th>训练 A</th><th>训练 B</th><th>B − A</th></tr></thead><tbody>'+Object.entries(metrics).map(([key,[label,unit]])=>{const x=ra.metrics[key],y=rb.metrics[key];return `<tr><td>${label}（${unit}）</td><td>${valueText(x)}</td><td>${valueText(y)}</td><td>${finite(x)&&finite(y)?`${y-x>0?'+':''}${(y-x).toFixed(1)}`:'无法比较'}</td></tr>`;}).join('')+'</tbody>';
   renderCompareChart();
 }
@@ -303,6 +401,9 @@ function editDialog(title,message,value,callback) {
 }
 
 document.addEventListener('click', e=>{
+  const mode=e.target.closest('[data-mode]');
+  if(mode){try{selectMode(mode.dataset.mode);}catch(error){toast(error.message);}return;}
+  if(e.target.closest('#mode-back')){try{selectMode(null);}catch(error){toast(error.message);}return;}
   const nav=e.target.closest('[data-page]');if(nav){page(nav.dataset.page);return;}
   const report=e.target.closest('[data-report]');if(report)openReport(report.dataset.report).catch(error=>toast(error.message));
   const retry=e.target.closest('[data-retry]');if(retry){retry.disabled=true;api(`analysis/${retry.dataset.retry}/retry`,{method:'POST'}).then(refresh).catch(error=>{toast(error.message);retry.disabled=false;});}
@@ -317,6 +418,7 @@ on('video-file','change',e=>chooseFile(e.target.files[0]));
 on('analyze-btn','click',async()=>{if(!needUser()||state.busy)return;if(!state.file)throw new Error('请先选择视频，或使用摄像头录制');state.busy=true;$('analyze-btn').disabled=true;$('analyze-btn').textContent='正在上传并创建任务…';try{await submitVideo(state.file);toast('任务已提交，关闭页面后仍会继续分析');}finally{state.busy=false;$('analyze-btn').disabled=false;$('analyze-btn').textContent='开始分析';}});
 on('camera-open','click',openCamera);on('camera-close','click',closeCamera);on('quality-check','click',checkQuality);
 on('record-start','click',startRecording);on('live-start','click',liveAnalysis);
+on('promote-fine','click',promoteToFine);on('save-live','click',saveLiveAnalysis);
 on('record-pause','click',()=>{const r=state.recorder;if(r?.state==='recording'){r.pause();$('record-pause').textContent='继续录制';$('record-status').textContent='录制已暂停';}else if(r?.state==='paused'){r.resume();$('record-pause').textContent='暂停录制';$('record-status').textContent='正在录制';}});
 on('record-stop','click',()=>{state.live=false;if(state.recorder?.state!=='inactive')state.recorder?.stop();recordingUI(false);});
 on('calibrate','click',()=>{const src=currentCanvas(),canvas=$('calibration-canvas');canvas.width=src.width;canvas.height=src.height;canvas.getContext('2d').drawImage(src,0,0);state.calibration=[];$('calibration-panel').hidden=false;$('calibration-hint').textContent='点击站直人体的头顶，再点击脚底。也可直接填写身高对应像素。';});

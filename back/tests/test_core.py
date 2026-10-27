@@ -10,7 +10,7 @@ import numpy as np
 from storage import Store
 from service import settings
 from analysis_engine import angle, measure, quality, summarize, cadence, MeasurementHistory
-from analysis_engine import detect_orientation, OrientationEstimator
+from analysis_engine import detect_orientation, OrientationEstimator, LABELS, render_realtime_video
 
 
 class StorageTests(unittest.TestCase):
@@ -140,6 +140,41 @@ class AnalysisTests(unittest.TestCase):
         pending=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'direction':None},MeasurementHistory(),0)
         self.assertIsNone(pending['leanAngle'])
         self.assertIsNone(pending['leftStrideDistance'])
+
+    def test_realtime_video_renders_without_reanalysis(self):
+        import cv2
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            clip = directory / 'clip.avi'
+            writer = cv2.VideoWriter(str(clip), cv2.VideoWriter_fourcc(*'MJPG'), 25, (160, 120))
+            self.assertTrue(writer.isOpened())
+            for _ in range(50):
+                writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
+            writer.release()
+            metrics = {key: 1.0 for key in LABELS}
+            rows = [{'time': i / 10, 'visibility': .9, **metrics} for i in range(30)]
+            samples = [{'t': i / 10, 'p': [.5, .5] * 33, 'v': [1.0] * 33, 'k': [160.0, 150.0]}
+                       for i in range(30)]
+            payload = directory / 'samples.json'
+            payload.write_text(json.dumps({'rows': rows, 'samples': samples,
+                'quality': {'totalFrames': 30, 'usableFrames': 30, 'issues': {}},
+                'settings': {'heightCm': 180, 'view': 'side', 'direction': 'right', 'calibrationPixels': None},
+                'duration': 2.9, 'width': 160, 'height': 120, 'unknown': False}), encoding='utf-8')
+            progress = []
+            report = render_realtime_video(clip, payload, directory / 'out',
+                                           lambda *args: progress.append(args))
+            rendered = Path(report['renderedPath'])
+            self.assertTrue(rendered.is_file())
+            self.assertEqual(report['quality']['source'], 'realtime-snapshot')
+            self.assertEqual(report['fps'], 25)
+            self.assertAlmostEqual(report['duration'], 2.0, places=1)
+            self.assertEqual(len(report['timeSeries']), 30)
+            self.assertIn('骨架回放', report['quality']['note'])
+            self.assertTrue(progress)
+            cap = cv2.VideoCapture(str(rendered))
+            self.assertEqual(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 50)
+            cap.release()
 
     def test_invalid_settings(self):
         for data in [{'heightCm':float('nan')},{'heightCm':20},{'calibrationPixels':-10},{'view':'rear'},[]]:

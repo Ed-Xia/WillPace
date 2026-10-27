@@ -136,6 +136,78 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.post('/api/analyze/video',json={'videoId':video['videoId']})).status,404)
         self.assertFalse((Path(self.tmp.name)/job['analysisId']).exists())
 
+    async def test_realtime_snapshot_saves_sampled_rows_without_video(self):
+        await self.register(self.client,'alice')
+        rows=[{'time':i/10,'visibility':.9,'leanAngle':6.0,'verticalOscillation':7.0,
+               'leftKnee':160.0,'rightKnee':158.0,'leftHip':170.0,'rightHip':168.0,
+               'leftAnkle':100.0,'rightAnkle':98.0,'leftElbow':90.0,'rightElbow':88.0,
+               'leftStrideDistance':12.0,'rightStrideDistance':-8.0} for i in range(30)]
+        payload={'rows':rows,'settings':{'heightCm':175,'view':'side','direction':'right'},
+                 'duration':2.9,'width':960,'height':540,
+                 'quality':{'totalFrames':30,'usableFrames':28,'issues':{'光线不足，请增加照明':2}}}
+        response=await self.client.post('/api/realtime/report',json=payload)
+        self.assertEqual(response.status,201)
+        report=(await response.json())['data']
+        self.assertNotIn('videoUrl',report)
+        self.assertNotIn('renderedPath',report)
+        self.assertEqual(report['quality']['source'],'realtime-snapshot')
+        self.assertIn('抽帧',report['quality']['note'])
+        self.assertEqual(len(report['timeSeries']),30)
+        self.assertEqual(report['quality']['validFrames'],28)
+        self.assertAlmostEqual(report['metrics']['leanAngle'],6.0,places=2)
+        listed=(await (await self.client.get('/api/reports')).json())['data']['list']
+        self.assertEqual(listed[0]['reportId'],report['reportId'])
+        self.assertEqual((await self.client.get(f'/api/report/{report["reportId"]}/media')).status,404)
+        for fmt,signature in [('pdf',b'%PDF'),('csv',b'\xef\xbb\xbf')]:
+            exported=await self.client.get(f'/api/report/{report["reportId"]}/export/{fmt}')
+            self.assertEqual(exported.status,200)
+            self.assertTrue((await exported.read()).startswith(signature))
+        self.assertEqual((await self.client.put(f'/api/report/{report["reportId"]}/name',json={'reportName':'实时快照'})).status,200)
+        self.assertEqual((await self.client.delete('/api/report/'+report['reportId'])).status,200)
+        self.assertEqual((await self.client.get('/api/report/'+report['reportId'])).status,404)
+
+    async def test_realtime_snapshot_renders_recorded_video(self):
+        import cv2
+        import numpy as np
+        from analysis_engine import LABELS
+        await self.register(self.client,'alice')
+        with tempfile.TemporaryDirectory() as source:
+            clip=Path(source)/'clip.avi'
+            writer=cv2.VideoWriter(str(clip),cv2.VideoWriter_fourcc(*'MJPG'),20,(160,120))
+            self.assertTrue(writer.isOpened())
+            for _ in range(20): writer.write(np.zeros((120,160,3),dtype=np.uint8))
+            writer.release()
+            payload=json.dumps({'rows':[{'time':i/10,'visibility':.9,**{key:6.0 for key in LABELS}} for i in range(20)],
+                                'samples':[{'t':i/10,'p':[.5,.5]*33,'v':[1.0]*33,'k':[150.0,150.0]} for i in range(20)],
+                                'settings':{'heightCm':175,'view':'side','direction':'right'},
+                                'duration':1.9,'width':160,'height':120,
+                                'quality':{'totalFrames':20,'usableFrames':20,'issues':{}}})
+            data=FormData()
+            data.add_field('payload',payload,content_type='application/json')
+            data.add_field('video',clip.read_bytes(),filename='live.avi',content_type='video/x-msvideo')
+            response=await self.client.post('/api/realtime/report',data=data)
+            self.assertEqual(response.status,202)
+            job=(await response.json())['data']
+            self.assertEqual(job['kind'],'render')
+            await asyncio.gather(*list(self.app['service'].tasks))
+            job=(await (await self.client.get('/api/analysis/'+job['analysisId'])).json())['data']
+            self.assertEqual(job['status'],'completed')
+            report=(await (await self.client.get('/api/report/'+job['reportId'])).json())['data']
+            self.assertIn('videoUrl',report)
+            self.assertIn('骨架回放',report['quality']['note'])
+            self.assertEqual(report['quality']['source'],'realtime-snapshot')
+            media=await self.client.get(report['videoUrl'],headers={'Range':'bytes=0-3'})
+            self.assertEqual(media.status,206)
+            self.assertEqual((await self.client.delete('/api/report/'+job['reportId'])).status,200)
+            self.assertFalse((Path(self.tmp.name)/job['analysisId']).exists())
+            self.assertEqual(list(Path(self.tmp.name).glob('*.avi')),[])
+
+    async def test_realtime_snapshot_rejects_empty_or_invalid_rows(self):
+        await self.register(self.client,'alice')
+        for payload in ({'rows':[]},{'rows':[{'time':-1}]},{'rows':[{'time':'x'}]},{'rows':'bad'}):
+            with self.subTest(payload=payload):
+                self.assertEqual((await self.client.post('/api/realtime/report',json=payload)).status,400)
+
     async def test_login_logout_and_origin(self):
         self.assertEqual((await self.client.get('/api/reports')).status,401)
         await self.register(self.client,'alice')
