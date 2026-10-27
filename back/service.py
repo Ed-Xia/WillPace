@@ -21,7 +21,7 @@ from aiohttp import web
 from storage import Store
 
 BASE = Path(__file__).resolve().parent
-FRONT = BASE.parent.parent / '前端'
+FRONT = BASE.parent / 'front'
 LOG = logging.getLogger(__name__)
 MAX_UPLOAD = 200 * 1024 * 1024
 
