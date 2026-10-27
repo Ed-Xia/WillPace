@@ -18,7 +18,10 @@ function drawPose(data) {
     ctx.lineTo(data.points[b][0]*canvas.width,data.points[b][1]*canvas.height);ctx.stroke();
   }
   data.points.forEach((p,i)=>{if(visible(i)){ctx.beginPath();ctx.arc(p[0]*canvas.width,p[1]*canvas.height,3,0,Math.PI*2);ctx.fill();}});
-  $('pose-status').textContent=`${data.points.length?'正在识别':'等待人体入镜'} · 关键点可用 ${(data.quality.visibility*100).toFixed(0)}%`;
+  const d=data.detected||{}, parts=[];
+  if(d.autoView && d.view) parts.push(d.view==='side'?'侧面':'正面');
+  if(d.autoDirection && d.direction) parts.push('朝'+(d.direction==='right'?'右':'左'));
+  $('pose-status').textContent=`${data.points.length?'正在识别':'等待人体入镜'} · 关键点可用 ${(data.quality.visibility*100).toFixed(0)}%${parts.length?` · 自动判断：${parts.join('、')}`:''}`;
   $('pose-metrics').innerHTML=['leanAngle','verticalOscillation','leftKnee','rightKnee','leftHip','rightHip'].map(key=>`<div><span>${metrics[key][0]}</span><strong>${valueText(data.metrics[key])} <small>${metrics[key][1]}</small></strong></div>`).join('');
   $('pose-hint').textContent=data.quality.messages.join('；') || '请保持全身入镜和固定机位。实时结果仅用于动作观察。';
   poseState.frames++;

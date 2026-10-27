@@ -130,8 +130,12 @@ async function checkQuality() {
   try {
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.85));
     const q=await api(`quality/frame?view=${$('capture-view').value}`,{method:'POST',body:blob});
+    const d=q.detected||{}, parts=[];
+    if(d.autoView && d.view) parts.push(d.view==='side'?'侧面':'正面');
+    if(d.autoDirection && d.direction) parts.push('朝'+(d.direction==='right'?'右':'左'));
+    const detected=parts.length?` · 自动判断为${parts.join('、')}`:'';
     $('quality-result').classList.toggle('warning',!q.usable || q.messages.length>0);
-    $('quality-result').innerHTML=`<strong>${q.usable?'当前画面可以采集':'建议调整后再采集'}</strong> · 关键点可用比例 ${(q.visibility*100).toFixed(0)}%<ul>${(q.messages.length?q.messages:['全身入镜和亮度检查通过']).map(m=>`<li>${esc(m)}</li>`).join('')}</ul>`;
+    $('quality-result').innerHTML=`<strong>${q.usable?'当前画面可以采集':'建议调整后再采集'}</strong> · 关键点可用比例 ${(q.visibility*100).toFixed(0)}%${detected}<ul>${(q.messages.length?q.messages:['全身入镜和亮度检查通过']).map(m=>`<li>${esc(m)}</li>`).join('')}</ul>`;
   } catch(error) { $('quality-result').textContent=error.message; throw error; }
   finally { $('quality-check').disabled=false; }
 }
@@ -252,7 +256,8 @@ async function openReport(id) {
   $('report-video').src=mediaURL(report.videoUrl); $('report-video').playbackRate=Number($('playback-speed').value);
   $('timeline').max=report.duration; $('timeline').value=0;
   $('detail-suggestions').innerHTML=report.suggestions.map(s=>`<p>${esc(s)}</p>`).join('');
-  $('detail-settings').innerHTML=`<p>身高 ${report.settings.heightCm} cm · ${report.settings.view==='side'?'侧面':'正面'} · 朝${report.settings.direction==='right'?'右':'左'} · ${esc(q.scaleMethod)}</p>${q.issues.map(i=>`<p>${esc(i.message)}：${i.frames} 帧</p>`).join('')}<p>脚相对髋部距离是有正负号的水平位置，不等同于落地步长；关节角度为三点夹角。</p>`;
+  const sideInfo=report.settings.view==='side'?` · 朝${report.settings.direction==='right'?'右':'左'}`:'';
+  $('detail-settings').innerHTML=`<p>身高 ${report.settings.heightCm} cm · ${report.settings.view==='side'?'侧面':'正面'}${sideInfo} · ${esc(q.scaleMethod)}</p>${q.issues.map(i=>`<p>${esc(i.message)}：${i.frames} 帧</p>`).join('')}<p>脚相对髋部距离是有正负号的水平位置，不等同于落地步长；关节角度为三点夹角。</p>`;
   $('detail-events').innerHTML=report.events.length?report.events.map(e=>`<button data-time="${e.time}">${e.time.toFixed(1)}s · ${esc(e.issues.join('、'))}</button>`).join(''):'<p class="muted small">当前报告没有可用的异常标记。</p>';
   renderDetailChart(); updatePlayback(); page('detail'); window.scrollTo({top:0,behavior:'smooth'});
 }

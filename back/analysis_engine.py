@@ -36,6 +36,82 @@ def mean(values):
     return round(float(np.mean(values)), 3) if values else None
 
 
+def detect_orientation(points, visibility, width, height):
+    """Estimate camera view and running direction from one frame's 2D landmarks.
+
+    Returns {'view': 'side'|'front'|None, 'direction': 'left'|'right'|None}.
+    None means the frame is not informative enough to vote.
+    """
+    if points is None or visibility is None:
+        return {'view': None, 'direction': None}
+    visible = np.asarray(visibility) >= .6
+    pixels = points[:, :2] * [width, height]
+    view = None
+    if all(visible[i] for i in (11, 12, 23, 24)):
+        shoulders = np.linalg.norm(pixels[11] - pixels[12])
+        hips = np.linalg.norm(pixels[23] - pixels[24])
+        torso = np.linalg.norm((pixels[11] + pixels[12] - pixels[23] - pixels[24]) / 2)
+        if torso >= 20:
+            # 正面时左右肩/髋明显分开；侧面时两侧投影几乎重合，比值接近 0。
+            frontness = (shoulders + hips) / (2 * torso)
+            if frontness >= .5:
+                view = 'front'
+            elif frontness <= .25:
+                view = 'side'
+            else:
+                # 介于两者之间时用左右两侧的深度差辅助判断，避免斜侧镜头无法归类。
+                horizontal = abs(points[11, 0] - points[12, 0]) + abs(points[23, 0] - points[24, 0])
+                depth = abs(points[11, 2] - points[12, 2]) + abs(points[23, 2] - points[24, 2])
+                ratio = horizontal / (horizontal + depth) if horizontal + depth > 1e-6 else None
+                if ratio is not None and ratio <= .45:
+                    view = 'side'
+                elif ratio is not None and ratio >= .8:
+                    view = 'front'
+    direction = None
+    if all(visible[i] for i in (29, 30, 31, 32)):
+        # 脚尖相对脚跟的横向偏移指向行走方向。
+        toe = ((pixels[31, 0] - pixels[29, 0]) + (pixels[32, 0] - pixels[30, 0])) / 2
+        if abs(toe) >= .01 * width:
+            direction = 'right' if toe > 0 else 'left'
+    if direction is None and visible[0] and (visible[7] or visible[8]):
+        # 脚部不可见时用鼻尖相对耳朵的水平偏移判断面部朝向。
+        ears = [i for i in (7, 8) if visible[i]]
+        offset = pixels[0, 0] - float(np.mean([pixels[i, 0] for i in ears]))
+        if abs(offset) >= .01 * width:
+            direction = 'right' if offset > 0 else 'left'
+    return {'view': view, 'direction': direction}
+
+
+def stable_vote(votes, minimum=8, ratio=.75):
+    if len(votes) < minimum:
+        return None
+    label, count = Counter(votes).most_common(1)[0]
+    return label if count >= minimum and count >= ratio * len(votes) else None
+
+
+class OrientationEstimator:
+    """Sticky majority vote so one ambiguous frame cannot flip the measurement mode."""
+    def __init__(self, view='side', direction='right', window=30):
+        self.fixed_view = None if view == 'auto' else view
+        self.fixed_direction = None if direction == 'auto' else direction
+        self.view, self.direction = self.fixed_view, self.fixed_direction
+        self.views, self.directions = deque(maxlen=window), deque(maxlen=window)
+
+    def update(self, detection):
+        if self.fixed_view is None and detection['view']:
+            self.views.append(detection['view'])
+            self.view = stable_vote(self.views) or self.view
+        if self.fixed_direction is None and detection['direction']:
+            self.directions.append(detection['direction'])
+            self.direction = stable_vote(self.directions, minimum=6) or self.direction
+
+    def settings(self, config):
+        return {**config, 'view': self.view, 'direction': self.direction}
+
+    def resolved(self, config):
+        return {**config, 'view': self.view or 'side', 'direction': self.direction or 'right'}
+
+
 def quality(frame, points, visibility, view='side'):
     brightness = float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean())
     messages = []
@@ -92,7 +168,13 @@ def inspect_frame(frame, settings):
     detector = PoseDetector()
     try:
         points, _, visibility = detector.detect(frame, 0)
-        result = quality(frame, points, visibility, settings.get('view', 'side'))
+        height, width = frame.shape[:2]
+        detected = detect_orientation(points, visibility, width, height)
+        requested = settings.get('view', 'side')
+        view = detected['view'] if requested == 'auto' else requested
+        result = quality(frame, points, visibility, view or 'auto')
+        result['detected'] = {**detected, 'autoView': requested == 'auto',
+                              'autoDirection': settings.get('direction', 'right') == 'auto'}
         result['points'] = points[:, :2].round(4).tolist() if points is not None else []
         return result
     finally:
@@ -116,8 +198,8 @@ def measure(points, world, visibility, width, height, settings, history, timesta
     pixels = points[:, :2] * [width, height]
     shoulders, hips = (pixels[11] + pixels[12]) / 2, (pixels[23] + pixels[24]) / 2
     # Image coordinates have y pointing down. Sign follows the chosen running direction.
-    direction = 1 if settings.get('direction', 'right') == 'right' else -1
-    if settings.get('view') == 'side':
+    direction = -1 if settings.get('direction') == 'left' else 1
+    if settings.get('view') == 'side' and settings.get('direction') in ('left', 'right'):
         row['leanAngle'] = round(math.degrees(math.atan2(direction * (shoulders[0] - hips[0]), hips[1] - shoulders[1])), 2)
     scale_pixels = settings.get('calibrationPixels')
     if not scale_pixels and all(valid[i] for i in [0, 27, 28]):
@@ -137,10 +219,11 @@ def measure(points, world, visibility, width, height, settings, history, timesta
             heights = [h for _, h in history]
             row['verticalOscillation'] = round(float(np.percentile(heights, 95) - np.percentile(heights, 5)) * cm_per_pixel, 2)
         if settings.get('view') == 'side':
-            for name, index in [('leftStrideDistance', 27), ('rightStrideDistance', 28)]:
-                if valid[index]:
-                    row[name] = round(direction * (pixels[index, 0] - hips[0]) * cm_per_pixel, 2)
-        elif valid[27] and valid[28]:
+            if settings.get('direction') in ('left', 'right'):
+                for name, index in [('leftStrideDistance', 27), ('rightStrideDistance', 28)]:
+                    if valid[index]:
+                        row[name] = round(direction * (pixels[index, 0] - hips[0]) * cm_per_pixel, 2)
+        elif settings.get('view') == 'front' and valid[27] and valid[28]:
             # 正面视角：用左右脚踝高度差作为步态周期信号（差分解掉身体整体垂直晃动）。
             diff = (pixels[27, 1] - pixels[28, 1]) * cm_per_pixel
             row['leftStrideDistance'], row['rightStrideDistance'] = round(diff, 2), round(-diff, 2)
@@ -159,6 +242,7 @@ class LivePoseSession:
         self.config = config
         self.detector = PoseDetector()
         self.history = MeasurementHistory()
+        self.orientation = OrientationEstimator(config.get('view', 'side'), config.get('direction', 'right'))
         self.last_timestamp = -1
 
     def process(self, blob, timestamp_ms):
@@ -170,11 +254,16 @@ class LivePoseSession:
             self.history = MeasurementHistory()
         self.last_timestamp = timestamp_ms
         points, world, visibility = self.detector.detect(frame, timestamp_ms)
-        q = quality(frame, points, visibility, self.config['view'])
         height, width = frame.shape[:2]
+        self.orientation.update(detect_orientation(points, visibility, width, height))
+        config = self.orientation.settings(self.config)
+        q = quality(frame, points, visibility, config['view'] or 'auto')
         row = measure(points if q['usable'] else None, world, visibility,
-                      width, height, self.config, self.history, timestamp_ms / 1000)
-        return {'type': 'frame', 'quality': q, 'metrics': row,
+                      width, height, config, self.history, timestamp_ms / 1000)
+        return {'type': 'frame', 'quality': q, 'metrics': row, 'detected': {
+                    'view': self.orientation.view, 'direction': self.orientation.direction,
+                    'autoView': self.orientation.fixed_view is None,
+                    'autoDirection': self.orientation.fixed_direction is None},
                 'points': points[:, :2].round(5).tolist() if points is not None else [],
                 'visibility': visibility.round(3).tolist() if visibility is not None else [],
                 'edges': EDGES, 'width': width, 'height': height}
@@ -278,6 +367,7 @@ def analyze_video(path, output_dir, settings, progress):
         if not writer.isOpened():
             raise ValueError('无法创建骨架视频')
         history, rows, counts = MeasurementHistory(), [], Counter()
+        orientation = OrientationEstimator(settings.get('view', 'side'), settings.get('direction', 'right'))
         frame_index = usable = 0
         next_sample = 0.0
         first_quality = None
@@ -287,11 +377,13 @@ def analyze_video(path, output_dir, settings, progress):
                 break
             timestamp = frame_index / fps
             points, world, visibility = detector.detect(frame, round(timestamp * 1000))
-            q = quality(frame, points, visibility, settings['view'])
+            orientation.update(detect_orientation(points, visibility, width, height))
+            active = orientation.settings(settings)
+            q = quality(frame, points, visibility, active['view'] or 'auto')
             first_quality = first_quality or q
             counts.update(q['messages'])
             usable += int(q['usable'])
-            row = measure(points if q['usable'] else None, world, visibility, width, height, settings, history, timestamp)
+            row = measure(points if q['usable'] else None, world, visibility, width, height, active, history, timestamp)
             row['visibility'] = q['visibility']
             if timestamp + .0001 >= next_sample:
                 rows.append(row)
@@ -326,8 +418,9 @@ def analyze_video(path, output_dir, settings, progress):
                         '-movflags', '+faststart', str(final_path)], check=True, capture_output=True,
                        timeout=180, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         raw_path.unlink(missing_ok=True)
-        result = summarize(rows, counts, frame_index, usable, settings)
-        result.update(timeSeries=rows, settings=settings, duration=round(frame_index / fps, 3),
+        resolved = orientation.resolved(settings)
+        result = summarize(rows, counts, frame_index, usable, resolved)
+        result.update(timeSeries=rows, settings=resolved, duration=round(frame_index / fps, 3),
                       fps=fps, width=width, height=height, firstFrameQuality=first_quality,
                       renderedPath=str(final_path))
         return result

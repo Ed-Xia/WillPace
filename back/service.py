@@ -45,7 +45,7 @@ def settings(data):
     if pixels is not None and (not math.isfinite(pixels) or not 20 <= pixels <= 5000):
         raise ValueError('标定高度须在 20–5000 像素之间')
     view, direction = data.get('view', 'side'), data.get('direction', 'right')
-    if view not in ('side', 'front') or direction not in ('left', 'right'):
+    if view not in ('auto', 'side', 'front') or direction not in ('auto', 'left', 'right'):
         raise ValueError('拍摄方向无效')
     return {'heightCm': height, 'calibrationPixels': pixels, 'view': view, 'direction': direction}
 

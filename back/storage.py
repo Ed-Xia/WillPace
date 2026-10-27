@@ -46,7 +46,7 @@ class Store:
 
     def register(self, username, password):
         user_id, salt = secrets.token_hex(16), secrets.token_hex(16)
-        profile = {'nickname': username, 'heightCm': 170, 'view': 'side', 'direction': 'right', 'calibrationPixels': None}
+        profile = {'nickname': username, 'heightCm': 170, 'view': 'auto', 'direction': 'auto', 'calibrationPixels': None}
         with self.connect() as db:
             db.execute('INSERT INTO users VALUES (?,?,?,?,?)',
                        (user_id, username, salt, self.password_hash(password, salt), json.dumps(profile)))

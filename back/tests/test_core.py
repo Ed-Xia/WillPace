@@ -10,6 +10,7 @@ import numpy as np
 from storage import Store
 from service import settings
 from analysis_engine import angle, measure, quality, summarize, cadence, MeasurementHistory
+from analysis_engine import detect_orientation, OrientationEstimator
 
 
 class StorageTests(unittest.TestCase):
@@ -69,7 +70,8 @@ class AnalysisTests(unittest.TestCase):
     def test_front_view_does_not_emit_side_metrics(self):
         row=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'view':'front'},MeasurementHistory(),0)
         self.assertIsNone(row['leanAngle'])
-        self.assertIsNone(row['leftStrideDistance'])
+        # 正面以左右脚踝高度差作为步态周期信号，而不是侧面的前后距离。
+        self.assertEqual((row['leftStrideDistance'],row['rightStrideDistance']),(0.0,-0.0))
         self.assertIsNotNone(row['leftKnee'])
 
     def test_calibration_scales_distance(self):
@@ -108,6 +110,36 @@ class AnalysisTests(unittest.TestCase):
         rows=[{'time':i/30,'leftStrideDistance':20*math.sin(2*math.pi*1.5*i/30),'rightStrideDistance':0} for i in range(180)]
         self.assertAlmostEqual(cadence(rows),180,delta=3)
         self.assertIsNone(cadence(rows[:15]))
+
+    def test_auto_orientation_detection_and_voting(self):
+        side=np.full((33,3),.5); side[:,2]=0
+        for i in [11,12]: side[i,:2]=[.5,.3]
+        for i in [23,24]: side[i,:2]=[.5,.6]
+        self.assertEqual(detect_orientation(side,np.ones(33),1000,1000)['view'],'side')
+        front=side.copy()
+        for i,x in [(11,.35),(12,.65),(23,.4),(24,.6)]: front[i,:2]=[x,.3 if i in (11,12) else .6]
+        self.assertEqual(detect_orientation(front,np.ones(33),1000,1000)['view'],'front')
+        for i in [29,30]: side[i,:2]=[.5,.92]
+        for i in [31,32]: side[i,:2]=[.55,.92]
+        self.assertEqual(detect_orientation(side,np.ones(33),1000,1000)['direction'],'right')
+        tracker=OrientationEstimator('auto','auto')
+        detection={'view':'side','direction':'left'}
+        for _ in range(7): tracker.update(detection)
+        self.assertIsNone(tracker.view)
+        tracker.update(detection)
+        self.assertEqual(tracker.settings(self.settings)['view'],'side')
+        self.assertEqual(tracker.settings(self.settings)['direction'],'left')
+
+    def test_auto_settings_are_valid_and_unknown_view_skips_side_metrics(self):
+        auto=settings({'heightCm':180,'view':'auto','direction':'auto'})
+        self.assertEqual((auto['view'],auto['direction']),('auto','auto'))
+        row=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'view':None},MeasurementHistory(),0)
+        self.assertIsNone(row['leanAngle'])
+        self.assertIsNone(row['leftStrideDistance'])
+        self.assertIsNotNone(row['leftKnee'])
+        pending=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'direction':None},MeasurementHistory(),0)
+        self.assertIsNone(pending['leanAngle'])
+        self.assertIsNone(pending['leftStrideDistance'])
 
     def test_invalid_settings(self):
         for data in [{'heightCm':float('nan')},{'heightCm':20},{'calibrationPixels':-10},{'view':'rear'},[]]:
