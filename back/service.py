@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -91,6 +92,7 @@ class Service:
         self.queue = asyncio.Semaphore(1)
         self.tasks = set()
         self.auth_attempts = defaultdict(deque)
+        self.realtime_connections = 0
 
     def owned(self, request, kind, object_id):
         data = self.store.get(kind, object_id, request['user']['id'])
@@ -298,6 +300,52 @@ class Service:
         return web.Response(body=body, content_type=mime, headers={
             'Content-Disposition': f'attachment; filename="posepro-{report["reportId"]}.{kind}"'})
 
+    async def realtime(self, request):
+        if self.realtime_connections >= 2:
+            return result(message='实时分析连接已满，请稍后重试', status=429)
+        ws = web.WebSocketResponse(max_msg_size=1024 * 1024, heartbeat=15)
+        self.realtime_connections += 1
+        worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='live-pose')
+        loop = asyncio.get_running_loop()
+        session = None
+        try:
+            await ws.prepare(request)
+            body = await ws.receive_json(timeout=10)
+            config = settings(body)
+            frame_scale = float(body.get('frameScale', 1))
+            if not math.isfinite(frame_scale) or not 0 < frame_scale <= 1:
+                raise ValueError('实时画面比例无效')
+            if config['calibrationPixels'] is not None:
+                config['calibrationPixels'] *= frame_scale
+            from analysis_engine import LivePoseSession
+            session = await loop.run_in_executor(worker, LivePoseSession, config)
+            await ws.send_json({'type': 'ready'})
+            started = time.monotonic()
+            while not ws.closed:
+                message = await ws.receive(timeout=30)
+                if message.type == web.WSMsgType.BINARY:
+                    timestamp = round((time.monotonic() - started) * 1000)
+                    data = await loop.run_in_executor(worker, session.process, message.data, timestamp)
+                    await ws.send_json(data)
+                elif message.type in (web.WSMsgType.CLOSE, web.WSMsgType.CLOSED, web.WSMsgType.ERROR):
+                    break
+                else:
+                    raise ValueError('请发送 JPEG 画面')
+        except (ValueError, TypeError, asyncio.TimeoutError) as exc:
+            if not ws.closed:
+                await ws.send_json({'type': 'error', 'message': str(exc) or '实时分析连接超时，请重新开启'})
+        except Exception:
+            LOG.exception('Realtime analysis failed')
+            if not ws.closed:
+                await ws.send_json({'type': 'error', 'message': '实时分析失败，请重新开启'})
+        finally:
+            if session is not None:
+                await loop.run_in_executor(worker, session.close)
+            worker.shutdown(wait=False)
+            self.realtime_connections -= 1
+            await ws.close()
+        return ws
+
     async def quality(self, request):
         import cv2
         import numpy as np
@@ -366,6 +414,7 @@ def create_app(data_dir=None, engine=None):
     routes.add_get('/api/analysis/{id}', service.jobs)
     routes.add_post('/api/analysis/{id}/retry', service.retry)
     routes.add_post('/api/quality/frame', service.quality)
+    routes.add_get('/api/realtime/pose', service.realtime)
     routes.add_get('/api/reports', service.reports)
     routes.add_get('/api/report/{id}', service.report)
     routes.add_delete('/api/report/{id}', service.report)
@@ -375,7 +424,7 @@ def create_app(data_dir=None, engine=None):
 
     async def asset(request):
         name = request.match_info.get('name', 'index.html')
-        if name not in ('index.html', 'app.js', 'app.css', 'api-config.js'):
+        if name not in ('index.html', 'app.js', 'app.css', 'api-config.js', 'pose.js'):
             raise web.HTTPNotFound()
         return web.FileResponse(FRONT / name, headers={'Cache-Control': 'no-cache'})
     routes.add_get('/', asset)

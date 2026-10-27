@@ -1,9 +1,9 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WillPace · 跑步姿态分析</title><link rel="stylesheet" href="app.css">
-<script src="api-config.js" defer></script><script src="app.js" defer></script>
+<script src="api-config.js" defer></script><script src="app.js" defer></script><script src="pose.js" defer></script>
 </head>
 <body>
 <header><a class="brand" href="#analyze"><span class="brand-mark">W</span>WillPace <small>运动观察室</small></a><div class="header-right"><span id="account-label">尚未登录</span><button id="account-btn" class="quiet">登录 / 注册</button></div></header>
@@ -14,7 +14,7 @@
 <div class="grid two"><article class="card"><div class="section-heading"><h2>01 · 采集视频</h2><span class="muted">单人 · 固定机位</span></div>
 <label class="upload-zone" for="video-file"><span class="upload-icon">↑</span><strong>选择一段跑步视频</strong><span>MP4 / MOV / WebM / AVI · 最大 200 MB · 10 分钟以内</span><input id="video-file" type="file" accept="video/*,.mkv" class="file-input"></label>
 <div class="row wrap"><button id="camera-open" class="secondary">打开摄像头</button><button id="camera-close" class="quiet" hidden>关闭摄像头</button><span id="file-label" class="muted">尚未选择视频</span></div>
-<video id="preview" controls playsinline muted hidden></video>
+<div class="camera-preview"><video id="preview" controls playsinline muted hidden></video><canvas id="pose-overlay" hidden aria-label="实时姿态骨架"></canvas></div><div id="pose-panel" class="notice" hidden aria-live="polite"><div class="row wrap"><strong id="pose-status">实时姿态分析准备中</strong><button id="pose-toggle" class="quiet">停止实时分析</button></div><div id="pose-metrics" class="pose-metrics"></div><p id="pose-hint" class="muted small"></p></div>
 <div id="camera-controls" class="row wrap" hidden><button id="record-start">开始录制</button><button id="record-pause" class="secondary" hidden>暂停录制</button><button id="record-stop" class="danger" hidden>结束并分析</button><button id="live-start" class="secondary">连续分段分析</button><span id="record-status" role="status"></span></div>
 <div id="live-feedback" class="notice" hidden></div>
 </article><article class="card"><h2>02 · 拍摄检查与标定</h2><p class="muted">全身入镜、背景清晰，侧面镜头保持水平。先检查画面，再开始分析。</p>

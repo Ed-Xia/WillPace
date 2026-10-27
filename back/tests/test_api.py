@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -43,6 +44,58 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         response=await client.post('/api/auth/register',json={'username':name,'password':'test-password-123'})
         self.assertEqual(response.status,200)
         return (await response.json())['data']
+
+    async def test_frontend_assets_are_served(self):
+        for path, content_type in [('/', 'text/html'), ('/app.js', 'javascript'),
+                                   ('/app.css', 'text/css'), ('/api-config.js', 'javascript'),
+                                   ('/pose.js', 'javascript')]:
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertEqual(response.status, 200)
+                self.assertIn(content_type, response.headers['Content-Type'])
+                self.assertTrue(await response.read())
+
+    async def test_realtime_auth_stream_and_cleanup(self):
+        from aiohttp import WSServerHandshakeError
+        with self.assertRaises(WSServerHandshakeError) as error:
+            await self.client.ws_connect('/api/realtime/pose')
+        self.assertEqual(error.exception.status, 401)
+        await self.register(self.client, 'camerauser')
+        closed = []
+        class FakeSession:
+            def __init__(self, config):
+                self.config = config
+            def process(self, blob, timestamp):
+                if blob != b'jpeg':
+                    raise ValueError('无效画面')
+                return {'type':'frame', 'timestamp':timestamp, 'pixels':self.config['calibrationPixels']}
+            def close(self):
+                closed.append(True)
+        with patch('analysis_engine.LivePoseSession', FakeSession):
+            ws = await self.client.ws_connect('/api/realtime/pose')
+            await ws.send_json({'calibrationPixels':600, 'frameScale':.5})
+            self.assertEqual((await ws.receive_json(timeout=5))['type'], 'ready')
+            for _ in range(3):
+                await ws.send_bytes(b'jpeg')
+                frame = await ws.receive_json(timeout=5)
+                self.assertEqual(frame['type'], 'frame')
+                self.assertEqual(frame['pixels'], 300)
+            await ws.send_bytes(b'invalid')
+            self.assertEqual((await ws.receive_json(timeout=5))['type'], 'error')
+            await ws.close()
+            for _ in range(50):
+                if self.app['service'].realtime_connections == 0:
+                    break
+                await asyncio.sleep(.01)
+        self.assertTrue(closed)
+        self.assertEqual(self.app['service'].realtime_connections, 0)
+
+    async def test_realtime_rejects_invalid_settings(self):
+        await self.register(self.client, 'camerauser')
+        ws = await self.client.ws_connect('/api/realtime/pose')
+        await ws.send_json({'heightCm':0})
+        self.assertEqual((await ws.receive_json(timeout=5))['type'], 'error')
+        await ws.close()
 
     async def create_report(self):
         await self.register(self.client,'alice')

@@ -143,8 +143,11 @@ async function openCamera() {
   $('camera-controls').hidden=false; $('camera-close').hidden=false; $('camera-open').hidden=true;
   $('file-label').textContent='摄像头已开启'; $('capture-pixels').value=''; $('calibration-panel').hidden=true;
   $('quality-result').textContent='请站到拍摄位置，点击“检查当前画面”。';
+  state.stream.getVideoTracks()[0]?.addEventListener('ended',closeCamera,{once:true});
+  startPoseAnalysis();
 }
 function closeCamera() {
+  stopPoseAnalysis(); $('pose-panel').hidden=true;
   state.live=false; state.discardRecording=true;
   if(state.recorder && state.recorder.state!=='inactive') state.recorder.stop();
   state.stream?.getTracks().forEach(track=>track.stop()); state.stream=null; state.recording=false;

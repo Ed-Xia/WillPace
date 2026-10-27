@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "WillPace: Python server",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "program": "${workspaceFolder}/back/server_main.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "POSEPRO_HOST": "127.0.0.1",
+        "POSEPRO_PORT": "3001",
+        "POSEPRO_DATA_DIR": "${workspaceFolder}/.test-data/debug"
+      }
+    }
+  ]
+}

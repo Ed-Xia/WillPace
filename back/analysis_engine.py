@@ -149,6 +149,36 @@ class MeasurementHistory(deque):
         self.scale_samples = []
 
 
+class LivePoseSession:
+    """One detector and measurement history per camera connection, on one worker."""
+    def __init__(self, config):
+        self.config = config
+        self.detector = PoseDetector()
+        self.history = MeasurementHistory()
+        self.last_timestamp = -1
+
+    def process(self, blob, timestamp_ms):
+        frame = cv2.imdecode(np.frombuffer(blob, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None or frame.shape[0] * frame.shape[1] > 1280 * 720:
+            raise ValueError('实时画面无效或超过 1280×720')
+        timestamp_ms = max(self.last_timestamp + 1, timestamp_ms)
+        if self.last_timestamp >= 0 and timestamp_ms - self.last_timestamp > 1500:
+            self.history = MeasurementHistory()
+        self.last_timestamp = timestamp_ms
+        points, world, visibility = self.detector.detect(frame, timestamp_ms)
+        q = quality(frame, points, visibility, self.config['view'])
+        height, width = frame.shape[:2]
+        row = measure(points if q['usable'] else None, world, visibility,
+                      width, height, self.config, self.history, timestamp_ms / 1000)
+        return {'type': 'frame', 'quality': q, 'metrics': row,
+                'points': points[:, :2].round(5).tolist() if points is not None else [],
+                'visibility': visibility.round(3).tolist() if visibility is not None else [],
+                'edges': EDGES, 'width': width, 'height': height}
+
+    def close(self):
+        self.detector.close()
+
+
 def cadence(rows):
     # Positive peaks of ankle separation represent successive cycles of the same leg.
     # No value is emitted when too few complete cycles are observed.
