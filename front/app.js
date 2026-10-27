@@ -114,6 +114,8 @@ async function chooseFile(file) {
   $('capture-pixels').value=''; $('calibration-panel').hidden=true;
   $('quality-result').textContent='可先播放到全身入镜的画面，再检查或标定。';
   preview.load();
+  const beginRealtime=()=>{$('preview').play().catch(()=>{}); startPoseAnalysis();};
+  if(preview.readyState>=1) beginRealtime(); else preview.addEventListener('loadedmetadata',beginRealtime,{once:true});
 }
 function currentCanvas() {
   const video=$('preview');

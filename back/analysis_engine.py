@@ -140,6 +140,10 @@ def measure(points, world, visibility, width, height, settings, history, timesta
             for name, index in [('leftStrideDistance', 27), ('rightStrideDistance', 28)]:
                 if valid[index]:
                     row[name] = round(direction * (pixels[index, 0] - hips[0]) * cm_per_pixel, 2)
+        elif valid[27] and valid[28]:
+            # 正面视角：用左右脚踝高度差作为步态周期信号（差分解掉身体整体垂直晃动）。
+            diff = (pixels[27, 1] - pixels[28, 1]) * cm_per_pixel
+            row['leftStrideDistance'], row['rightStrideDistance'] = round(diff, 2), round(-diff, 2)
     return row
 
 
@@ -234,7 +238,7 @@ def summarize(rows, quality_counts, total, usable, settings):
         else:
             suggestions.append('可评估片段未触发当前参考阈值。可与同条件的历史视频对比。')
         if settings['view'] != 'side':
-            suggestions.append('本次为正面采集，前倾、前后距离和步频不输出；可查看关节角度。')
+            suggestions.append('本次为正面采集，前倾和前后距离不输出；步频由左右脚踝高度差估算。')
     suggestions.append('前倾 5–10°、振幅 8 cm 为本项目的可视化参考线，不是个人诊断标准。')
     return {'metrics': metrics, 'events': events, 'suggestions': suggestions,
             'quality': {'validFrameRatio': round(coverage, 3), 'validFrames': usable, 'totalFrames': total,
@@ -257,9 +261,14 @@ def analyze_video(path, output_dir, settings, progress):
         fps = float(cap.get(cv2.CAP_PROP_FPS))
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width, height = int(cap.get(3)), int(cap.get(4))
-        if not math.isfinite(fps) or fps < 1 or fps > 240 or total <= 0:
+        if not math.isfinite(fps) or fps < 1 or fps > 240:
             raise ValueError('视频帧率或时长无效')
-        if total / fps > 600 or width * height > 3840 * 2160:
+        if total > fps * 600:
+            raise ValueError('请上传 10 分钟以内、最高 4K 的视频')
+        if not (0 < total <= fps * 600):
+            # 浏览器录制的 WebM 无时长元数据，CAP_PROP_FRAME_COUNT 不可用；帧数按解码统计。
+            total = 0
+        if width * height > 3840 * 2160:
             raise ValueError('请上传 10 分钟以内、最高 4K 的视频')
         detector = PoseDetector()
         # Bound rendered output size; original coordinates still drive measurements.
@@ -303,7 +312,8 @@ def analyze_video(path, output_dir, settings, progress):
             writer.write(rendered)
             frame_index += 1
             if frame_index % max(1, round(fps)) == 0:
-                progress(min(94, frame_index / total * 94), '正在识别与计算', frame_index, total)
+                percent = frame_index / total * 94 if total else min(94, frame_index / max(1, fps) / 10 * 94)
+                progress(min(94, percent), '正在识别与计算', frame_index, total)
         if frame_index == 0:
             raise ValueError('视频没有可解码画面')
         writer.release()

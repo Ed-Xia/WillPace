@@ -24,7 +24,7 @@ function drawPose(data) {
   poseState.frames++;
 }
 function startPoseAnalysis() {
-  if(!state.stream || !state.user) return;
+  if((!state.stream && !state.fileURL) || !state.user) return;
   const config=captureSettings(); stopPoseAnalysis();
   const preview=$('preview');
   config.frameScale=Math.min(1,960/preview.videoWidth,540/preview.videoHeight);
@@ -33,17 +33,17 @@ function startPoseAnalysis() {
   $('pose-toggle').textContent='停止实时分析'; poseState.frames=0;
   const url=new URL(apiURL('realtime/pose'));url.protocol=url.protocol==='https:'?'wss:':'ws:';
   const socket=poseState.socket=new WebSocket(url);
-  const active=()=>poseState.socket===socket && poseState.generation===generation && !!state.stream;
+  const active=()=>poseState.socket===socket && poseState.generation===generation && (!!state.stream || !!state.fileURL);
   const armTimeout=()=>{clearTimeout(poseState.watchdog);poseState.watchdog=setTimeout(()=>{if(active())stopPoseAnalysis('实时分析响应超时，请重新开启');},30000);};
   async function sendFrame() {
     if(!active() || socket.readyState!==WebSocket.OPEN) return;
     try {
-      const video=$('preview'); if(video.readyState<2) {poseState.timer=setTimeout(sendFrame,100);return;}
+      const video=$('preview'); if(video.readyState<2) {if(state.fileURL&&video.paused) video.play().catch(()=>{}); poseState.timer=setTimeout(sendFrame,100);return;}
       const canvas=document.createElement('canvas'), ratio=Math.min(1,960/video.videoWidth,540/video.videoHeight);
       canvas.width=Math.max(2,Math.round(video.videoWidth*ratio));canvas.height=Math.max(2,Math.round(video.videoHeight*ratio));
       canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
       const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.75));
-      if(active() && socket.readyState===WebSocket.OPEN) {if(!blob)throw new Error('无法读取摄像头画面');socket.send(blob);armTimeout();}
+      if(active() && socket.readyState===WebSocket.OPEN) {if(!blob)throw new Error('无法读取画面');socket.send(blob);armTimeout();}
     } catch(error) {if(active())stopPoseAnalysis(error.message);}
   }
   socket.onopen=()=>{if(active()){socket.send(JSON.stringify(config));armTimeout();}};
