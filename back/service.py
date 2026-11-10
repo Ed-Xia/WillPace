@@ -65,7 +65,7 @@ def build_pdf(report):
     content.append(Paragraph(escape(f"PosePro · {report['createTime']} · {report['duration']} 秒"), style))
     q = report['quality']
     content.append(Paragraph(escape(f"有效识别：{q['validFrameRatio']:.0%}；标定方式：{q['scaleMethod']}"), style))
-    rows = [['指标', '全片有效数据均值 / 估计值']]
+    rows = [['指标', '全片数据汇总 / 估计值（前倾为触底峰值）']]
     for key, label in LABELS.items():
         value = report['metrics'].get(key)
         unit = '步/分钟' if key == 'cadence' else ('cm' if key in ('verticalOscillation', 'leftStrideDistance', 'rightStrideDistance') else '°')
@@ -78,6 +78,17 @@ def build_pdf(report):
     content.extend([Spacer(1, 14), table, Spacer(1, 14)])
     for text in [q['note'], *report['suggestions']]:
         content.extend([Paragraph(escape(text), style), Spacer(1, 6)])
+    posture = report.get('posture')
+    if posture:
+        status = {'standard': '参考线内', 'watch': '发现偏离', 'insufficient': '数据不足，未判定'}.get(posture['status'], '')
+        content.append(Paragraph(escape(f'姿势判定：{status}'), style))
+        for item in posture['issues']:
+            share = f"（{item['share']:.0%} 帧）" if item.get('share') is not None else ''
+            content.append(Paragraph(escape(f"{item['label']}：{item['message']}{share}"), style))
+        if posture['issues']:
+            content.append(Paragraph(escape('参考：' + '；'.join(
+                f"{item['label']} {item['standard']}" for item in posture['standards']) + '；仅供观察，不是诊断结论。'), style))
+        content.append(Spacer(1, 6))
     for event in report['events'][:30]:
         content.append(Paragraph(escape(f"{event['time']:.1f} 秒：{'、'.join(event['issues'])}"), style))
     SimpleDocTemplate(stream, title=report['reportName'], author='PosePro').build(content)
@@ -417,7 +428,7 @@ class Service:
         raw_rows = body.get('rows')
         if not isinstance(raw_rows, list) or not 1 <= len(raw_rows) <= 20000:
             raise ValueError('没有可保存的实时抽帧数据，或数据条目过多')
-        keys = ('time', 'visibility', *LABELS)
+        keys = ('time', 'visibility', 'hipY', *LABELS)
         rows = []
         for raw in raw_rows:
             if not isinstance(raw, dict):

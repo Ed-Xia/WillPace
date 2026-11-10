@@ -1,7 +1,7 @@
 'use strict';
 const poseState = {socket:null, timer:null, watchdog:null, generation:0, frames:0};
 const liveBuffer = {rows:[], samples:[], frames:0, usable:0, issues:{}, width:0, height:0, lastTime:0, frameScale:1, detected:null};
-let liveRec = null, liveClip = null;
+let liveRec = null, liveClip = null, postureVoice = {code:'', at:0};
 function resetLiveBuffer() {
   liveBuffer.rows=[]; liveBuffer.samples=[]; liveBuffer.frames=0; liveBuffer.usable=0; liveBuffer.issues={};
   liveBuffer.width=0; liveBuffer.height=0; liveBuffer.lastTime=0; liveBuffer.detected=null;
@@ -95,10 +95,30 @@ function drawPose(data) {
   if(d.autoView && d.view) parts.push(d.view==='side'?'侧面':'正面');
   if(d.autoDirection && d.direction) parts.push('朝'+(d.direction==='right'?'右':'左'));
   $('pose-status').textContent=`${data.points.length?'正在识别':'等待人体入镜'} · 关键点可用 ${(data.quality.visibility*100).toFixed(0)}%${parts.length?` · 自动判断：${parts.join('、')}`:''}`;
-  $('pose-metrics').innerHTML=['leanAngle','verticalOscillation','leftKnee','rightKnee','leftHip','rightHip'].map(key=>`<div><span>${metrics[key][0]}</span><strong>${valueText(data.metrics[key])} <small>${metrics[key][1]}</small></strong></div>`).join('');
+  const posture=data.posture||[], flagged=new Set(posture.map(issue=>issue.code));
+  $('pose-metrics').innerHTML=['leanAngle','verticalOscillation','leftKnee','rightKnee','leftHip','rightHip'].map(key=>{
+    const warn=key==='leanAngle'?(flagged.has('lean_low')||flagged.has('lean_high'))
+      :key==='verticalOscillation'?(flagged.has('bounce_slight')||flagged.has('bounce_high')):false;
+    return `<div class="${warn?'warn':''}"><span>${metrics[key][0]}</span><strong>${valueText(data.metrics[key])} <small>${metrics[key][1]}</small></strong></div>`;
+  }).join('');
+  const line=$('pose-posture');
+  line.hidden=!data.points.length; line.classList.toggle('ok',!posture.length);
+  line.textContent=posture.length?`姿势提示：${posture.map(issue=>issue.message).join('；')}`:'未见参考线偏离';
+  speakPosture(posture);
   $('pose-hint').textContent=data.quality.messages.join('；') || '请保持全身入镜和固定机位。实时结果仅用于动作观察。';
   collectLiveFrame(data);
   poseState.frames++;
+}
+function speakPosture(posture) {
+  if(!$('live-voice').checked || !window.speechSynthesis) return;
+  if(!posture.length) return;
+  const code=posture.map(issue=>issue.code).sort().join(','), now=Date.now();
+  if(code===postureVoice.code && now-postureVoice.at<15000) return;
+  if(now-postureVoice.at<8000) return;
+  postureVoice={code, at:now};
+  speechSynthesis.cancel();
+  const speech=new SpeechSynthesisUtterance(posture.map(issue=>issue.voice||issue.message).join('。'));
+  speech.lang='zh-CN'; speechSynthesis.speak(speech);
 }
 function startPoseAnalysis() {
   if(state.mode!=='realtime') return;

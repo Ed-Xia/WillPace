@@ -11,6 +11,7 @@ from storage import Store
 from service import settings
 from analysis_engine import angle, measure, quality, summarize, cadence, MeasurementHistory
 from analysis_engine import detect_orientation, OrientationEstimator, LABELS, render_realtime_video
+from analysis_engine import evaluate_posture
 
 
 class StorageTests(unittest.TestCase):
@@ -80,6 +81,17 @@ class AnalysisTests(unittest.TestCase):
         b=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'heightCm':90},MeasurementHistory(),0)
         self.assertAlmostEqual(a['leftStrideDistance'],2*b['leftStrideDistance'])
 
+    def test_lean_uses_midstance_peak(self):
+        row=measure(self.points,self.world,self.visible,1000,1000,self.settings,MeasurementHistory(),0)
+        rows=[]
+        for i in range(40):
+            bottom=i in (5,10,15,20,25,30,35)
+            rows.append({**row,'time':i/10,'leanAngle':9.0 if bottom else 3.0,
+                         'hipY':520.0 if bottom else 500.0})
+        report=summarize(rows,Counter(),40,40,self.settings)
+        self.assertEqual(report['metrics']['leanAngle'],9.0)
+        self.assertEqual(report['leanBottoms'],[.5,1.0,1.5,2.0,2.5,3.0,3.5])
+
     def test_whole_video_mean_and_missing_coverage(self):
         row=measure(self.points,self.world,self.visible,1000,1000,self.settings,MeasurementHistory(),0)
         rows=[{**row,'time':i/10,'leanAngle':0 if i<50 else 20} for i in range(100)]
@@ -140,6 +152,34 @@ class AnalysisTests(unittest.TestCase):
         pending=measure(self.points,self.world,self.visible,1000,1000,{**self.settings,'direction':None},MeasurementHistory(),0)
         self.assertIsNone(pending['leanAngle'])
         self.assertIsNone(pending['leftStrideDistance'])
+
+    def test_posture_reference_rules(self):
+        base = {'leanAngle': 7, 'verticalOscillation': 5, 'cadence': 180,
+                'leftElbow': 90, 'rightElbow': 90}
+        self.assertEqual(evaluate_posture(base, self.settings), [])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': 3}, self.settings)], ['lean_low'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': 12}, self.settings)], ['lean_high'])
+        self.assertEqual(evaluate_posture({**base, 'leanAngle': 3}, {**self.settings, 'view': 'front'}), [])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'verticalOscillation': 9}, self.settings)], ['bounce_slight'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'verticalOscillation': 11}, self.settings)], ['bounce_high'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'cadence': 160}, self.settings)], ['cadence_low'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leftElbow': 70}, self.settings)], ['elbow_left'])
+
+    def test_summary_reports_posture_status_and_counts(self):
+        rows = []
+        for i in range(20):
+            row = {key: None for key in LABELS}
+            row.update(time=i / 10, leanAngle=3 if i < 5 else 7, verticalOscillation=9)
+            rows.append(row)
+        report = summarize(rows, Counter(), 20, 20, self.settings)
+        codes = {item['code'] for item in report['posture']['issues']}
+        self.assertEqual(report['posture']['status'], 'watch')
+        self.assertIn('lean_low', codes)
+        self.assertIn('bounce_slight', codes)
+        self.assertTrue(any(item['share'] == .25 for item in report['posture']['issues']))
+        insufficient = summarize([rows[0]] * 10, Counter(), 100, 0, self.settings)
+        self.assertEqual(insufficient['posture']['status'], 'insufficient')
+        self.assertEqual(insufficient['posture']['issues'], [])
 
     def test_realtime_video_renders_without_reanalysis(self):
         import cv2

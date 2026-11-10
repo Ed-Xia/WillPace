@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const metrics = {
-  leanAngle: ['躯干前倾', '°'], verticalOscillation: ['髋部垂直振幅', 'cm'],
+  leanAngle: ['躯干前倾（触底）', '°'], verticalOscillation: ['髋部垂直振幅', 'cm'],
   cadence: ['估计步频', '步/分钟'], leftStrideDistance: ['左脚相对髋部距离', 'cm'],
   rightStrideDistance: ['右脚相对髋部距离', 'cm'], leftKnee: ['左膝角度', '°'],
   rightKnee: ['右膝角度', '°'], leftHip: ['左髋角度', '°'], rightHip: ['右髋角度', '°'],
@@ -250,8 +250,9 @@ async function liveAnalysis() {
       if(!state.live) break;
       if(finished.status==='failed') throw new Error(finished.error);
       const report=await api(`report/${finished.reportId}`);
+      const posture=(report.posture?.issues||[]).filter(item=>item.level==='warn').map(item=>item.label);
       const text=report.quality.status==='insufficient'?'当前片段识别不足，请调整拍摄位置。':
-        `前倾 ${valueText(report.metrics.leanAngle)} 度，垂直振幅 ${valueText(report.metrics.verticalOscillation)} 厘米。${report.events.length?'有参考阈值偏离，请回看报告。':'本片段分析完成。'}`;
+        `前倾 ${valueText(report.metrics.leanAngle)} 度，垂直振幅 ${valueText(report.metrics.verticalOscillation)} 厘米。${posture.length?`姿势提示：${posture.join('、')}。`:report.events.length?'有参考阈值偏离，请回看报告。':'本片段分析完成。'}`;
       $('live-feedback').textContent=text;
       if($('voice-enabled').checked && window.speechSynthesis) { speechSynthesis.cancel(); const speech=new SpeechSynthesisUtterance(text); speech.lang='zh-CN'; speechSynthesis.speak(speech); }
       await refresh();
@@ -324,7 +325,7 @@ function chart(container, series, {duration=1, label='', normalized=false, selec
   let svg=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(label)}变化曲线" class="${onSeek?'interactive':''}">`;
   for(let i=0;i<5;i++) { const v=low+(high-low)*i/4,yy=y(v); svg+=`<line x1="${left}" x2="${width-right}" y1="${yy}" y2="${yy}" stroke="#e7ece8"/><text x="${left-8}" y="${yy+4}" text-anchor="end" fill="#7b8d83" font-size="11">${v.toFixed(1)}</text>`; }
   for(let i=0;i<=4;i++) { const xx=x(duration*i/4); const text=tickLabels ? tickLabels[Math.round((tickLabels.length-1)*i/4)] : `${(duration*i/4).toFixed(normalized?0:1)}${normalized?'%':'s'}`; svg+=`<text x="${xx}" y="${height-13}" text-anchor="middle" fill="#7b8d83" font-size="11">${esc(text)}</text>`; }
-  for(const s of series) { let path='',connected=false; for(const p of s.points) { if(!finite(p.y)) { connected=false;continue; } path+=`${connected?'L':'M'}${x(p.x).toFixed(2)},${y(p.y).toFixed(2)} `; connected=true; } svg+=`<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2"/>`; if(s.points.filter(p=>finite(p.y)).length===1) {const p=s.points.find(p=>finite(p.y));svg+=`<circle cx="${x(p.x)}" cy="${y(p.y)}" r="4" fill="${s.color}"/>`;} }
+  for(const s of series) { if(s.markers) { for(const p of s.points) if(finite(p.y)) svg+=`<circle cx="${x(p.x).toFixed(2)}" cy="${y(p.y).toFixed(2)}" r="3.5" fill="${s.color}" stroke="#fff" stroke-width="1"/>`; continue; } let path='',connected=false; for(const p of s.points) { if(!finite(p.y)) { connected=false;continue; } path+=`${connected?'L':'M'}${x(p.x).toFixed(2)},${y(p.y).toFixed(2)} `; connected=true; } svg+=`<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2"/>`; if(s.points.filter(p=>finite(p.y)).length===1) {const p=s.points.find(p=>finite(p.y));svg+=`<circle cx="${x(p.x)}" cy="${y(p.y)}" r="4" fill="${s.color}"/>`;} }
   if(onSeek) svg+=`<line class="play-cursor" x1="${x(selected||0)}" x2="${x(selected||0)}" y1="${top}" y2="${top+ph}" stroke="#d39947" stroke-width="1.5" stroke-dasharray="4 3"/>`;
   svg+='</svg>';
   container.innerHTML=svg;
@@ -339,6 +340,15 @@ async function openReport(id) {
   const q=report.quality;
   $('detail-quality').classList.toggle('warning',q.status==='insufficient');
   $('detail-quality').textContent=`${q.status==='insufficient'?'无法评估':'全片有效数据汇总'} · 有效识别 ${(q.validFrameRatio*100).toFixed(0)}%（${q.validFrames}/${q.totalFrames} 帧）。${q.note}`;
+  const posture=report.posture;
+  $('detail-posture').hidden=!posture;
+  if(posture){
+    const statusText={standard:'参考线内',watch:'发现偏离',insufficient:'数据不足，未判定'}[posture.status]||'';
+    $('detail-posture').classList.toggle('warning',posture.status==='watch');
+    $('detail-posture').innerHTML=`<strong>姿势判定：${statusText}</strong>`+
+      (posture.issues.length?`<ul>${posture.issues.map(item=>`<li>${esc(item.label)} · ${esc(item.message)}${item.share!=null?`（${(item.share*100).toFixed(0)}% 帧）`:''}</li>`).join('')}</ul>`:'<p class="muted small">未触发前倾、振幅、步频或肘角的参考线。</p>')+
+      `<p class="muted small">参考：${posture.standards.map(item=>`${item.label} ${item.standard}`).join(' · ')}；仅供观察，不是诊断结论。</p>`;
+  }
   $('detail-metrics').innerHTML=['leanAngle','verticalOscillation','cadence','leftKnee'].map(key=>`<div class="metric"><span>${metrics[key][0]}</span><strong>${valueText(report.metrics[key])}<small>${finite(report.metrics[key])?metrics[key][1]:''}</small></strong></div>`).join('');
   for(const kind of ['pdf','csv']) $('export-'+kind).href=apiURL(`report/${id}/export/${kind}`);
   const hasVideo=!!report.videoUrl;
@@ -356,7 +366,10 @@ async function openReport(id) {
   $('detail-events').innerHTML=report.events.length?report.events.map(e=>`<button data-time="${e.time}">${e.time.toFixed(1)}s · ${esc(e.issues.join('、'))}</button>`).join(''):'<p class="muted small">当前报告没有可用的异常标记。</p>';
   renderDetailChart(); updatePlayback(); page('detail'); window.scrollTo({top:0,behavior:'smooth'});
 }
-function renderDetailChart() { if(!state.report) return; const key=$('detail-metric').value,r=state.report;chart($('detail-chart'),[{color:'#276c50',points:r.timeSeries.map(p=>({x:p.time,y:p[key]}))}],{duration:r.duration,label:metrics[key][0],selected:$('report-video').currentTime,onSeek:r.videoUrl?seekReport:null}); }
+function renderDetailChart() { if(!state.report) return; const key=$('detail-metric').value,r=state.report,series=[{color:'#276c50',points:r.timeSeries.map(p=>({x:p.time,y:p[key]}))}];
+if(key==='leanAngle'&&r.leanBottoms&&r.leanBottoms.length) { const at=t=>{const p=r.timeSeries.reduce((b,q)=>!b||Math.abs(q.time-t)<Math.abs(b.time-t)?q:b,null);return p?p[key]:null;}; series.push({color:'#d39947',markers:true,points:r.leanBottoms.map(t=>({x:t,y:at(t)}))}); $('chart-hint').textContent='橙色点为触底采样帧，前倾指标取这些时刻的峰值均值。点击曲线定位画面，或拖动左侧时间轴。空白段表示识别不足。'; }
+else $('chart-hint').textContent='点击曲线定位画面，或拖动左侧时间轴。空白段表示识别不足。';
+chart($('detail-chart'),series,{duration:r.duration,label:metrics[key][0],selected:$('report-video').currentTime,onSeek:r.videoUrl?seekReport:null}); }
 function seekReport(time) { $('report-video').currentTime=time; updatePlayback(); }
 function updatePlayback() {
   const r=state.report;if(!r||!r.videoUrl)return;const time=$('report-video').currentTime || 0;
@@ -435,10 +448,11 @@ on('compare-play','click',async()=>{const a=$('compare-video-a'),b=$('compare-vi
 on('compare-video-a','timeupdate',()=>{if(!state.pair)return;const a=$('compare-video-a'),b=$('compare-video-b'),percent=a.currentTime/state.pair[0].duration*100;$('compare-timeline').value=percent;setCursor($('compare-chart'),percent,100);if($('compare-sync').checked){const target=percent/100*state.pair[1].duration;if(Math.abs(b.currentTime-target)>.25)b.currentTime=target;b.playbackRate=Math.max(.25,Math.min(4,state.pair[1].duration/state.pair[0].duration));}});
 on('growth-metric','change',renderGrowth);
 on('voice-enabled','change',()=>{localStorage.setItem('posepro_voice',String($('voice-enabled').checked));if(!$('voice-enabled').checked)window.speechSynthesis?.cancel();});
+on('live-voice','change',()=>{localStorage.setItem('posepro_live_voice',String($('live-voice').checked));if(!$('live-voice').checked)window.speechSynthesis?.cancel();});
 on('fun-mode','change',()=>{localStorage.setItem('posepro_fun',String($('fun-mode').checked));document.body.classList.toggle('fun',$('fun-mode').checked);renderReports();});
 on('legacy-export','click',()=>{const blob=new Blob([localStorage.getItem('kinetix_reports')||'[]'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='posepro-legacy-records.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
 window.addEventListener('beforeunload',closeCamera);
 for(const id of ['detail-metric','compare-metric','growth-metric'])$(id).innerHTML=Object.entries(metrics).filter(([key])=>id==='growth-metric'||key!=='cadence').map(([key,[label,unit]])=>`<option value="${key}">${label}（${unit}）</option>`).join('');
-$('voice-enabled').checked=localStorage.getItem('posepro_voice')!=='false';$('fun-mode').checked=localStorage.getItem('posepro_fun')==='true';document.body.classList.toggle('fun',$('fun-mode').checked);
+$('voice-enabled').checked=localStorage.getItem('posepro_voice')!=='false';$('live-voice').checked=localStorage.getItem('posepro_live_voice')==='true';$('fun-mode').checked=localStorage.getItem('posepro_fun')==='true';document.body.classList.toggle('fun',$('fun-mode').checked);
 $('legacy-export').hidden=!localStorage.getItem('kinetix_reports');
 (async()=>{try{state.user=await api('auth/me');profileToForms();await refresh();}catch(error){if(!state.user)showAuth();else toast(error.message);}state.polling=setInterval(()=>{if(state.user)refresh().catch(error=>{console.warn(error.message);});},2500);})();

@@ -17,7 +17,7 @@ JOINTS = {
 }
 EDGES = [(11,12),(11,13),(13,15),(12,14),(14,16),(11,23),(12,24),
          (23,24),(23,25),(25,27),(24,26),(26,28),(27,31),(28,32)]
-LABELS = {'leanAngle': '躯干前倾角度', 'verticalOscillation': '髋部垂直振幅',
+LABELS = {'leanAngle': '躯干前倾角度（触底峰值）', 'verticalOscillation': '髋部垂直振幅',
           'leftStrideDistance': '左脚相对髋部水平距离', 'rightStrideDistance': '右脚相对髋部水平距离',
           'cadence': '估计步频', 'leftKnee': '左膝角度', 'rightKnee': '右膝角度',
           'leftHip': '左髋角度', 'rightHip': '右髋角度', 'leftAnkle': '左踝角度',
@@ -184,7 +184,7 @@ def inspect_frame(frame, settings):
 
 def measure(points, world, visibility, width, height, settings, history, timestamp):
     row = {key: None for key in ['leanAngle', 'verticalOscillation', 'leftStrideDistance',
-                                 'rightStrideDistance', *JOINTS]}
+                                 'rightStrideDistance', 'hipY', *JOINTS]}
     row['time'] = round(timestamp, 3)
     if points is None:
         history.clear()
@@ -198,6 +198,7 @@ def measure(points, world, visibility, width, height, settings, history, timesta
         return row
     pixels = points[:, :2] * [width, height]
     shoulders, hips = (pixels[11] + pixels[12]) / 2, (pixels[23] + pixels[24]) / 2
+    row['hipY'] = round(float(hips[1]), 1)  # pixel height of the hip midpoint; marks mid-stance
     # Image coordinates have y pointing down. Sign follows the chosen running direction.
     direction = -1 if settings.get('direction') == 'left' else 1
     if settings.get('view') == 'side' and settings.get('direction') in ('left', 'right'):
@@ -245,6 +246,8 @@ class LivePoseSession:
         self.history = MeasurementHistory()
         self.orientation = OrientationEstimator(config.get('view', 'side'), config.get('direction', 'right'))
         self.last_timestamp = -1
+        self.rows = deque(maxlen=400)
+        self.posture_history = deque(maxlen=5)
 
     def process(self, blob, timestamp_ms):
         frame = cv2.imdecode(np.frombuffer(blob, np.uint8), cv2.IMREAD_COLOR)
@@ -253,6 +256,8 @@ class LivePoseSession:
         timestamp_ms = max(self.last_timestamp + 1, timestamp_ms)
         if self.last_timestamp >= 0 and timestamp_ms - self.last_timestamp > 1500:
             self.history = MeasurementHistory()
+            self.rows.clear()
+            self.posture_history.clear()
         self.last_timestamp = timestamp_ms
         points, world, visibility = self.detector.detect(frame, timestamp_ms)
         height, width = frame.shape[:2]
@@ -261,7 +266,14 @@ class LivePoseSession:
         q = quality(frame, points, visibility, config['view'] or 'auto')
         row = measure(points if q['usable'] else None, world, visibility,
                       width, height, config, self.history, timestamp_ms / 1000)
-        return {'type': 'frame', 'quality': q, 'metrics': row, 'detected': {
+        self.rows.append({'time': timestamp_ms / 1000,
+                          'leftStrideDistance': row.get('leftStrideDistance'),
+                          'rightStrideDistance': row.get('rightStrideDistance')})
+        issues = evaluate_posture(row, config, cadence(list(self.rows)) if q['usable'] else None)
+        self.posture_history.append({issue['code'] for issue in issues})
+        stable = [issue for issue in issues
+                  if sum(issue['code'] in seen for seen in self.posture_history) >= 3]
+        return {'type': 'frame', 'quality': q, 'metrics': row, 'posture': stable, 'detected': {
                     'view': self.orientation.view, 'direction': self.orientation.direction,
                     'autoView': self.orientation.fixed_view is None,
                     'autoDirection': self.orientation.fixed_direction is None},
@@ -292,9 +304,110 @@ def cadence(rows):
     return round(float(120 / np.median(intervals)), 1) if len(intervals) >= 2 else None
 
 
+POSTURE_STANDARDS = [
+    {'key': 'leanAngle', 'label': '躯干前倾角', 'standard': '5–10°', 'note': '取支撑期触底时刻的峰值，仅侧面视角'},
+    {'key': 'verticalOscillation', 'label': '垂直振幅', 'standard': '≤8 cm', 'note': '8–10 cm 为略高，超过 10 cm 为明显偏大'},
+    {'key': 'cadence', 'label': '步频', 'standard': '170–190 步/分钟', 'note': '估计值，随配速变化'},
+    {'key': 'elbow', 'label': '肘角', 'standard': '80–120°', 'note': '左右分别判断'},
+]
+
+
+def evaluate_posture(metrics, settings, cadence_value=None):
+    """Compare one frame (or averaged metrics) with the project's posture reference lines."""
+    issues = []
+
+    def add(code, label, message, voice, value, standard, level='warn'):
+        issues.append({'code': code, 'label': label, 'message': message, 'voice': voice,
+                       'value': round(float(value), 2), 'standard': standard, 'level': level})
+
+    if settings.get('view') == 'side':
+        lean = metrics.get('leanAngle')
+        if lean is not None:
+            if lean < 5:
+                add('lean_low', '前倾不足', f'前倾 {lean:.1f}°，低于参考 5–10°，身体略直立',
+                    '前倾不足，身体再前倾一点', lean, '5–10°')
+            elif lean > 10:
+                add('lean_high', '前倾过大', f'前倾 {lean:.1f}°，高于参考 5–10°，注意腰背放松',
+                    '前倾过大，注意收住', lean, '5–10°')
+    bounce = metrics.get('verticalOscillation')
+    if bounce is not None and bounce > 8:
+        severe = bounce > 10
+        add('bounce_high' if severe else 'bounce_slight',
+            '上下起伏偏大' if severe else '上下起伏略高',
+            f'垂直振幅 {bounce:.1f} cm，{"明显" if severe else "略"}高于参考 8 cm',
+            '上下起伏偏大，减小弹跳' if severe else '上下起伏略高，注意重心平稳',
+            bounce, '≤8 cm')
+    for key, side in (('leftElbow', '左'), ('rightElbow', '右')):
+        value = metrics.get(key)
+        if value is not None and not 80 <= value <= 120:
+            add('elbow_left' if key == 'leftElbow' else 'elbow_right', f'{side}肘角偏离',
+                f'{side}肘角 {value:.0f}°，参考 80–120°', '注意摆臂角度，保持手臂自然弯曲',
+                value, '80–120°', 'info')
+    pace = cadence_value if cadence_value is not None else metrics.get('cadence')
+    if pace is not None:
+        if pace < 170:
+            add('cadence_low', '步频偏低', f'步频 {pace:.0f}，低于参考 170–190 步/分钟',
+                '步频偏低，适当加快节奏', pace, '170–190')
+        elif pace > 190:
+            add('cadence_high', '步频偏高', f'步频 {pace:.0f}，高于参考 170–190 步/分钟',
+                '步频偏高，注意放松节奏', pace, '170–190')
+    return issues
+
+
+def posture_summary(rows, metrics, settings, insufficient):
+    """Aggregate per-frame posture deviations and the summary-only cadence check."""
+    if insufficient:
+        return {'status': 'insufficient', 'issues': [], 'checkedFrames': len(rows),
+                'standards': POSTURE_STANDARDS}
+    counts = {}
+    for row in rows:
+        for issue in evaluate_posture(row, settings):
+            entry = counts.setdefault(issue['code'], {
+                **{key: value for key, value in issue.items() if key != 'value'}, 'frames': 0})
+            entry['frames'] += 1
+    if metrics.get('cadence') is not None:
+        for issue in evaluate_posture({'cadence': metrics['cadence']}, settings):
+            counts[issue['code']] = {**{key: value for key, value in issue.items() if key != 'value'},
+                                     'frames': None}
+    total = max(len(rows), 1)
+    issues = sorted(counts.values(), key=lambda item: (-(item['frames'] or total), item['code']))
+    for item in issues:
+        item['share'] = round(item['frames'] / total, 3) if item['frames'] is not None else None
+    watch = any(item['share'] is None or item['share'] >= .1 for item in issues)
+    return {'status': 'watch' if watch else 'standard', 'issues': issues,
+            'checkedFrames': len(rows), 'standards': POSTURE_STANDARDS}
+
+
+def lean_at_midstance(rows, minimum=2):
+    """Forward lean averaged over each stride's lowest-hip frame (mid-stance).
+
+    The 5–10° reference describes support-phase peak lean, not a cycle average.
+    Returns (mean, bottom times); (None, []) when fewer than `minimum`
+    mid-stance moments are found, letting the caller fall back to the whole-video mean."""
+    samples = [(r['time'], r['hipY'], r['leanAngle']) for r in rows
+               if r.get('hipY') is not None and r.get('leanAngle') is not None]
+    if len(samples) < 10:
+        return None, []
+    bottoms, last = [], -10
+    for i in range(1, len(samples) - 1):
+        t, h, _ = samples[i]
+        prev_h, next_h = samples[i - 1][1], samples[i + 1][1]
+        # Image y grows downward, so the lowest hip is a local maximum of hipY.
+        # Plateau edges qualify, but a flat signal (camera drift only) does not.
+        if h >= prev_h and h >= next_h and (h > prev_h or h > next_h) and t - last >= .25:
+            bottoms.append((t, samples[i][2]))
+            last = t
+    if len(bottoms) < minimum:
+        return None, []
+    return mean([lean for _, lean in bottoms]), [round(t, 3) for t, _ in bottoms]
+
+
 def summarize(rows, quality_counts, total, usable, settings):
     coverage = usable / total if total else 0
     metrics = {key: mean([row[key] for row in rows]) for key in LABELS if key != 'cadence'}
+    peak, lean_bottoms = lean_at_midstance(rows)
+    if peak is not None:
+        metrics['leanAngle'] = peak
     metrics['cadence'] = cadence(rows)
     available = {key: sum(row.get(key) is not None for row in rows) / max(len(rows), 1)
                  for key in metrics if key != 'cadence'}
@@ -308,14 +421,8 @@ def summarize(rows, quality_counts, total, usable, settings):
     events = []
     last = -10
     for row in rows:
-        issues = []
-        if metrics['leanAngle'] is not None and row['leanAngle'] is not None:
-            if row['leanAngle'] < 5:
-                issues.append('前倾角度低于参考区间')
-            elif row['leanAngle'] > 10:
-                issues.append('前倾角度高于参考区间')
-        if metrics['verticalOscillation'] is not None and (row['verticalOscillation'] or 0) > 8:
-            issues.append('垂直振幅高于参考值')
+        issues = [item['message'] for item in evaluate_posture(row, settings)
+                  if item['code'] in ('lean_low', 'lean_high', 'bounce_slight', 'bounce_high')]
         if issues and row['time'] - last >= 1:
             events.append({'time': row['time'], 'issues': issues})
             last = row['time']
@@ -329,8 +436,10 @@ def summarize(rows, quality_counts, total, usable, settings):
             suggestions.append('可评估片段未触发当前参考阈值。可与同条件的历史视频对比。')
         if settings['view'] != 'side':
             suggestions.append('本次为正面采集，前倾和前后距离不输出；步频由左右脚踝高度差估算。')
-    suggestions.append('前倾 5–10°、振幅 8 cm 为本项目的可视化参考线，不是个人诊断标准。')
+    suggestions.append('前倾 5–10°、振幅 8 cm、步频 170–190、肘角 80–120° 为本项目的可视化参考线，不是个人诊断标准。')
     return {'metrics': metrics, 'events': events, 'suggestions': suggestions,
+            'leanBottoms': lean_bottoms,
+            'posture': posture_summary(rows, metrics, settings, insufficient),
             'quality': {'validFrameRatio': round(coverage, 3), 'validFrames': usable, 'totalFrames': total,
                         'status': 'insufficient' if insufficient else 'available',
                         'metricCoverage': available,
