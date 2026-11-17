@@ -448,10 +448,15 @@ def summarize(rows, quality_counts, total, usable, settings):
                         'note': '有效识别比例反映画面可用程度，不代表测量准确率；距离与振幅为单目估计。'}}
 
 
-def snapshot_report(rows, quality_counts, total, usable, settings, duration, width, height, has_video=False):
+def snapshot_report(rows, quality_counts, total, usable, settings, duration, width, height,
+                    has_video=False, video_kind='recording'):
     """Build a report from already-sampled realtime rows without re-analysis."""
     report = summarize(rows, quality_counts, total, usable, settings)
-    if has_video:
+    if has_video and video_kind == 'skeleton':
+        note = ('本报告由实时分析数据直接生成：指标来自抽帧测量，骨架回放由抽帧关键点在空白画布上绘制，'
+                '不含原始画面，也未重新逐帧分析。')
+        tip = '骨架回放只显示抽帧关键点，用于回看动作节奏；真实画面与逐帧精度请使用“转为精细分析”。'
+    elif has_video:
         note = ('本报告由实时分析数据直接生成：指标来自抽帧测量，骨架回放由同步录制画面叠加抽帧关键点合成，'
                 '未重新逐帧分析。')
         tip = '骨架回放使用实时抽帧关键点，画面更新频率低于原视频；数值与曲线用于观察趋势，逐帧精度请使用“转为精细分析”。'
@@ -558,6 +563,110 @@ def render_realtime_video(video_path, payload_path, output_dir, progress):
         cap.release()
         if writer:
             writer.release()
+
+
+def render_skeleton_video(payload_path, output_dir, progress):
+    """Draw sampled realtime landmarks on a blank canvas when no recording exists."""
+    payload = json.loads(Path(payload_path).read_text(encoding='utf-8'))
+    samples = payload.get('samples') or []
+    rows = payload.get('rows') or []
+    meta = payload.get('quality') or {}
+    active = payload.get('settings') or {}
+    if not samples:
+        raise ValueError('没有可用的抽帧关键点，无法生成骨架回放')
+    last_sample = max(float(sample['t']) for sample in samples)
+    duration = payload.get('duration')
+    duration = float(duration) if isinstance(duration, (int, float)) else last_sample
+    duration = min(max(duration, .2), last_sample + .3)
+    fps = 12.0 if duration <= 180 else 6.0
+    width = payload.get('width') if isinstance(payload.get('width'), int) else 0
+    height = payload.get('height') if isinstance(payload.get('height'), int) else 0
+    if width <= 0 or height <= 0:
+        width, height = 720, 1280
+    ratio = min(1, 720 / max(width, height))
+    render_size = (max(2, int(width * ratio) // 2 * 2), max(2, int(height * ratio) // 2 * 2))
+    rw, rh = render_size
+    template = np.zeros((rh, rw, 3), np.uint8)
+    template[:] = (26, 32, 29)
+    for i in range(1, 6):
+        cv2.line(template, (0, rh * i // 6), (rw, rh * i // 6), (42, 50, 46), 1)
+        cv2.line(template, (rw * i // 6, 0), (rw * i // 6, rh), (42, 50, 46), 1)
+    cv2.line(template, (rw // 2, 0), (rw // 2, rh), (52, 62, 57), 1)
+    scale = max(.45, rh / 1500)
+    total_frames = max(1, int(round(duration * fps)))
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    final_path = output_dir / 'skeleton.mp4'
+    import imageio_ffmpeg
+    command = [imageio_ffmpeg.get_ffmpeg_exe(), '-y', '-loglevel', 'error',
+               '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{rw}x{rh}', '-r', f'{fps:g}', '-i', '-',
+               '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '24', '-pix_fmt', 'yuv420p',
+               '-movflags', '+faststart', str(final_path)]
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    sample_index = row_index = 0
+    try:
+        for frame_index in range(total_frames):
+            timestamp = frame_index / fps
+            while sample_index + 1 < len(samples) and samples[sample_index + 1]['t'] <= timestamp + .05:
+                sample_index += 1
+            rendered = template.copy()
+            sample = samples[sample_index]
+            if abs(sample['t'] - timestamp) <= .4:
+                draw_landmark_sample(rendered, sample, render_size)
+            cv2.putText(rendered, f'{timestamp:.1f}s', (12, int(30 * scale)),
+                        cv2.FONT_HERSHEY_SIMPLEX, scale, (235, 240, 236), max(1, int(round(scale))))
+            label = 'REALTIME SKELETON REPLAY'
+            (text_width, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale * .7, 1)
+            cv2.putText(rendered, label, (rw - text_width - 12, int(30 * scale)),
+                        cv2.FONT_HERSHEY_SIMPLEX, scale * .7, (128, 148, 138), max(1, int(round(scale * .6))))
+            status = row_near(rows, row_index, timestamp) if rows else None
+            while row_index + 1 < len(rows) and float(rows[row_index + 1].get('time') or 0) <= timestamp:
+                row_index += 1
+            if status:
+                parts = []
+                if status.get('leanAngle') is not None:
+                    parts.append(f"前倾 {status['leanAngle']:.1f}°")
+                if status.get('cadence') is not None:
+                    parts.append(f"步频 {status['cadence']:.0f}")
+                if parts:
+                    cv2.putText(rendered, '  '.join(parts), (12, rh - int(16 * scale)),
+                                cv2.FONT_HERSHEY_SIMPLEX, scale * .75, (160, 200, 180),
+                                max(1, int(round(scale * .7))))
+            process.stdin.write(rendered.tobytes())
+            if (frame_index + 1) % max(1, int(fps)) == 0:
+                progress(min(94, (frame_index + 1) / total_frames * 94), '正在绘制骨架回放',
+                         frame_index + 1, total_frames)
+        process.stdin.close()
+        if process.wait(timeout=600) != 0:
+            raise ValueError('骨架回放编码失败')
+    except BrokenPipeError:
+        raise ValueError('骨架回放编码失败')
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    if not final_path.is_file() or final_path.stat().st_size == 0:
+        raise ValueError('骨架回放生成失败')
+    report = snapshot_report(rows, Counter(meta.get('issues') or {}),
+                             int(meta.get('totalFrames') or len(rows)),
+                             int(meta.get('usableFrames') or 0),
+                             active, total_frames / fps, rw, rh, has_video=True, video_kind='skeleton')
+    if payload.get('unknown'):
+        report['suggestions'].append('本次未能自动判定拍摄视角或朝向，前倾与水平距离可能缺失；可手动指定后重新采集。')
+    report.update(timeSeries=rows, settings=active, fps=round(fps, 2), renderedPath=str(final_path))
+    return report
+
+
+def row_near(rows, index, timestamp):
+    """Closest row around a monotonically advancing cursor, for the skeleton HUD."""
+    current = rows[min(index, len(rows) - 1)]
+    choices = [current]
+    if index + 1 < len(rows):
+        choices.append(rows[index + 1])
+    best = min(choices, key=lambda row: abs(float(row.get('time') or 0) - timestamp))
+    return best if abs(float(best.get('time') or 0) - timestamp) <= .5 else None
 
 
 def analyze_video(path, output_dir, settings, progress):

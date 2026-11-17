@@ -3,7 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -202,6 +202,30 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((Path(self.tmp.name)/job['analysisId']).exists())
             self.assertEqual(list(Path(self.tmp.name).glob('*.avi')),[])
 
+    async def test_realtime_snapshot_draws_skeleton_video_without_recording(self):
+        from analysis_engine import LABELS
+        await self.register(self.client,'alice')
+        payload={'rows':[{'time':i/10,'visibility':.9,**{key:6.0 for key in LABELS}} for i in range(20)],
+                 'samples':[{'t':i/10,'p':[.5,.5]*33,'v':[1.0]*33,'k':[150.0,150.0]} for i in range(20)],
+                 'settings':{'heightCm':175,'view':'side','direction':'right'},
+                 'duration':1.9,'width':160,'height':120,
+                 'quality':{'totalFrames':20,'usableFrames':20,'issues':{}}}
+        response=await self.client.post('/api/realtime/report',json=payload)
+        self.assertEqual(response.status,202)
+        job=(await response.json())['data']
+        self.assertEqual(job['kind'],'skeleton')
+        await asyncio.gather(*list(self.app['service'].tasks))
+        job=(await (await self.client.get('/api/analysis/'+job['analysisId'])).json())['data']
+        self.assertEqual(job['status'],'completed')
+        report=(await (await self.client.get('/api/report/'+job['reportId'])).json())['data']
+        self.assertIn('videoUrl',report)
+        self.assertIn('空白画布',report['quality']['note'])
+        self.assertEqual(report['quality']['source'],'realtime-snapshot')
+        media=await self.client.get(report['videoUrl'],headers={'Range':'bytes=0-3'})
+        self.assertEqual(media.status,206)
+        self.assertEqual((await self.client.delete('/api/report/'+job['reportId'])).status,200)
+        self.assertFalse((Path(self.tmp.name)/job['analysisId']).exists())
+
     async def test_realtime_snapshot_rejects_empty_or_invalid_rows(self):
         await self.register(self.client,'alice')
         for payload in ({'rows':[]},{'rows':[{'time':-1}]},{'rows':[{'time':'x'}]},{'rows':'bad'}):
@@ -247,6 +271,50 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.put('/api/profile',json={'heightCm':185,'nickname':'测试昵称','view':'front'})).status,200)
         me=(await (await self.client.get('/api/auth/me')).json())['data']
         self.assertEqual(me['profile']['heightCm'],185)
+
+    async def test_report_advice_caching_prefs_and_fallback(self):
+        job,_=await self.create_report()
+        report_id=job['reportId']
+        self.assertIsNone((await (await self.client.get(f'/api/report/{report_id}/advice')).json())['data'])
+        content={'summary':'总体观察','priorities':[{'title':'重心','detail':'保持稳定','evidence':'leanAngle'}],
+                 'drills':[{'name':'原地抬腿','purpose':'热身','dosage':'2 组 30 秒'}],
+                 'weeklyPlan':[{'day':'周一','focus':'恢复','detail':'轻松跑 20 分钟'}],'cautions':['量力而行']}
+        meta={'model':'test-model','promptVersion':'m1-1'}
+        with patch('llm.generate',AsyncMock(return_value=(content,meta))) as generate:
+            first=(await (await self.client.post(f'/api/report/{report_id}/advice',json={})).json())['data']
+            self.assertEqual(first['content']['summary'],'总体观察')
+            self.assertEqual(first['model'],'test-model')
+            self.assertFalse(first['fallback'])
+            self.assertEqual(generate.await_count,1)
+            self.assertEqual(generate.await_args[0][1]['goal'],'改善跑姿')
+            cached=(await (await self.client.post(f'/api/report/{report_id}/advice',json={})).json())['data']
+            self.assertEqual(generate.await_count,1)
+            self.assertEqual(cached['createTime'],first['createTime'])
+            self.assertEqual((await self.client.put('/api/profile',json={'heightCm':170,'goal':'减脂','style':'严格'})).status,200)
+            tuned=(await (await self.client.post(f'/api/report/{report_id}/advice',json={})).json())['data']
+            self.assertEqual(generate.await_count,2)
+            self.assertEqual(generate.await_args[0][1]['goal'],'减脂')
+            refreshed=(await (await self.client.post(f'/api/report/{report_id}/advice',json={'refresh':True})).json())['data']
+            self.assertEqual(generate.await_count,3)
+            self.assertNotEqual(refreshed['createTime'],tuned['createTime'])
+        with patch('llm.generate',AsyncMock(side_effect=ValueError('未配置大模型 API'))):
+            response=await self.client.post(f'/api/report/{report_id}/advice',json={'refresh':True})
+            self.assertEqual(response.status,200)
+            fallback=await response.json()
+            self.assertTrue(fallback['data']['fallback'])
+            self.assertIn('回落',fallback['message'])
+            self.assertTrue(fallback['data']['content']['priorities'])
+        # 回落的规则建议不写缓存，GET 仍返回上次成功生成的内容
+        stored=(await (await self.client.get(f'/api/report/{report_id}/advice')).json())['data']
+        self.assertEqual(stored['content']['summary'],'总体观察')
+        self.assertFalse(stored['fallback'])
+        exported=await self.client.get(f'/api/report/{report_id}/export/pdf')
+        self.assertEqual(exported.status,200)
+        self.assertTrue((await exported.read()).startswith(b'%PDF'))
+        await self.register(self.other,'bob')
+        self.assertEqual((await self.other.get(f'/api/report/{report_id}/advice')).status,404)
+        self.assertEqual((await self.client.delete('/api/report/'+report_id)).status,200)
+        self.assertEqual((await self.client.get(f'/api/report/{report_id}/advice')).status,404)
 
 
 if __name__=='__main__':unittest.main()

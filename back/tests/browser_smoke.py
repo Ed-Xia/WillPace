@@ -66,6 +66,10 @@ def main():
         page.locator('#edit-value').fill('验收报告 <安全显示>')
         page.locator('#edit-confirm').click()
         expect(page.locator('#detail-title')).to_have_text('验收报告 <安全显示>')
+        page.locator('#advice-generate').click()
+        expect(page.locator('#advice-generate')).to_have_text('重新生成建议',timeout=120000)
+        expect(page.locator('#detail-advice')).to_be_visible()
+        assert page.locator('#detail-advice').inner_text().strip(),'Advice content is empty'
         for kind,extension in [('pdf','pdf'),('csv','csv'),('video','mp4')]:
             with page.expect_download() as info:
                 page.locator('#export-'+kind).click()

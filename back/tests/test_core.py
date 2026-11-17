@@ -10,7 +10,7 @@ import numpy as np
 from storage import Store
 from service import settings
 from analysis_engine import angle, measure, quality, summarize, cadence, MeasurementHistory
-from analysis_engine import detect_orientation, OrientationEstimator, LABELS, render_realtime_video
+from analysis_engine import detect_orientation, OrientationEstimator, LABELS, render_realtime_video, render_skeleton_video
 from analysis_engine import evaluate_posture
 
 
@@ -214,6 +214,31 @@ class AnalysisTests(unittest.TestCase):
             self.assertTrue(progress)
             cap = cv2.VideoCapture(str(rendered))
             self.assertEqual(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 50)
+            cap.release()
+
+    def test_skeleton_video_renders_without_recording(self):
+        import cv2
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            metrics = {key: 1.0 for key in LABELS}
+            rows = [{'time': i / 10, 'visibility': .9, **metrics} for i in range(30)]
+            samples = [{'t': i / 10, 'p': [.5, .5] * 33, 'v': [1.0] * 33, 'k': [160.0, 150.0]}
+                       for i in range(30)]
+            payload = directory / 'samples.json'
+            payload.write_text(json.dumps({'rows': rows, 'samples': samples,
+                'quality': {'totalFrames': 30, 'usableFrames': 30, 'issues': {}},
+                'settings': {'heightCm': 180, 'view': 'side', 'direction': 'right', 'calibrationPixels': None},
+                'duration': 2.9, 'width': 160, 'height': 120, 'unknown': False}), encoding='utf-8')
+            report = render_skeleton_video(payload, directory / 'out', lambda *args: None)
+            rendered = Path(report['renderedPath'])
+            self.assertTrue(rendered.is_file())
+            self.assertEqual(report['quality']['source'], 'realtime-snapshot')
+            self.assertEqual(report['fps'], 12)
+            self.assertIn('空白画布', report['quality']['note'])
+            self.assertEqual(len(report['timeSeries']), 30)
+            cap = cv2.VideoCapture(str(rendered))
+            self.assertEqual(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 35)
             cap.release()
 
     def test_invalid_settings(self):

@@ -12,9 +12,10 @@ const state = {user:null, reports:[], jobs:[], report:null, pair:null, file:null
   stream:null, recorder:null, live:false, recording:false, discardRecording:false, registering:false,
   busy:false, page:'analyze', refreshBusy:false, authEpoch:0, calibration:[], polling:null, mode:null};
 const MODES = {
-  realtime: {label:'实时分析', summary:'实时分析 · 抽帧传输，画面同步叠加骨架与指标，并同步录制画面供保存或转为精细分析。'},
-  fine: {label:'精细分析', summary:'精细分析 · 整段视频逐帧处理，完成后导出指标与骨架视频报告。'}
+  realtime: {label:'实时分析', eyebrow:'REALTIME', subtitle:'抽帧实时反馈 · 实时骨架与指标 · 同步录制画面 · 连续分段分析与语音播报'},
+  fine: {label:'精细分析', eyebrow:'PRECISE', subtitle:'全帧处理 · 完成后生成报告 · PDF / CSV / 骨架视频导出 · 可回放、对比与趋势'}
 };
+const DEFAULT_HEADING = {eyebrow:'CAPTURE & ANALYZE', title:'从一次跑步，开始了解自己。', subtitle:'先选择分析方式，再进入对应的数据采集界面。'};
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const valueText = (value, digits=1) => finite(value) ? value.toFixed(digits) : '无法评估';
 const dateText = value => new Date(value).toLocaleString('zh-CN', {hour12:false});
@@ -57,8 +58,10 @@ function selectMode(mode) {
   state.mode=mode;
   $('mode-chooser').hidden=mode!==null;
   $('capture-workspace').hidden=mode===null;
-  $('mode-pill').hidden=mode===null;
-  if(mode) { $('mode-pill').textContent=MODES[mode].label; $('mode-summary').textContent=MODES[mode].summary; }
+  const heading=mode?MODES[mode]:null;
+  $('analyze-eyebrow').textContent=heading?heading.eyebrow:DEFAULT_HEADING.eyebrow;
+  $('analyze-title').textContent=heading?heading.label:DEFAULT_HEADING.title;
+  $('analyze-subtitle').textContent=heading?heading.subtitle:DEFAULT_HEADING.subtitle;
   $('fine-actions').hidden=mode!=='fine';
   $('realtime-note').hidden=mode!=='realtime';
   $('realtime-actions').hidden=mode!=='realtime';
@@ -83,6 +86,11 @@ function profileToForms() {
   $('profile-nickname').value=p.nickname || state.user.username;
   $('profile-age').value=p.age || '';
   $('profile-gender').value=p.gender || '';
+  $('profile-goal').value=p.goal || '改善跑姿';
+  $('profile-style').value=p.style || '鼓励';
+  $('profile-intensity').value=p.intensity || '中等';
+  $('profile-frequency').value=p.frequency || 3;
+  $('profile-notes').value=p.notes || '';
   $('account-label').textContent=p.nickname || state.user.username;
   $('account-btn').textContent='退出登录';
 }
@@ -307,9 +315,14 @@ async function saveLiveAnalysis() {
       $('live-save-status').textContent='已提交，正在合成骨架回放视频…';
       toast('已提交，报告生成后会出现在“分析报告”中');
     } else {
-      const report=await api('realtime/report',{method:'POST',body:snapshot});
-      $('live-save-status').textContent=`已保存 ${snapshot.rows.length} 帧抽帧数据`;
-      toast(`已保存报告“${report.reportName}”，可在分析报告中查看`);
+      const saved=await api('realtime/report',{method:'POST',body:snapshot});
+      if(saved.reportName) {
+        $('live-save-status').textContent=`已保存 ${snapshot.rows.length} 帧抽帧数据`;
+        toast(`已保存报告“${saved.reportName}”，可在分析报告中查看`);
+      } else {
+        $('live-save-status').textContent=`已提交 ${snapshot.rows.length} 帧抽帧数据，正在绘制骨架回放视频…`;
+        toast('已提交，报告生成后会出现在“分析报告”中');
+      }
     }
     resetLiveBuffer(); clearLiveClip(); await refresh();
   } finally { $('save-live').disabled=false; }
@@ -361,10 +374,49 @@ async function openReport(id) {
   else { $('report-video').pause(); $('report-video').removeAttribute('src'); $('report-video').load(); }
   $('timeline').max=report.duration||1; $('timeline').value=0;
   $('detail-suggestions').innerHTML=report.suggestions.map(s=>`<p>${esc(s)}</p>`).join('');
+  state.advice=null; $('detail-advice').hidden=true; $('detail-advice').innerHTML='';
+  $('advice-generate').textContent='生成个性化建议';
+  loadAdvice(report.reportId);
   const sideInfo=report.settings.view==='side'?` · 朝${report.settings.direction==='right'?'右':'左'}`:'';
   $('detail-settings').innerHTML=`<p>身高 ${report.settings.heightCm} cm · ${report.settings.view==='side'?'侧面':'正面'}${sideInfo} · ${esc(q.scaleMethod)}</p>${q.issues.map(i=>`<p>${esc(i.message)}：${i.frames} 帧</p>`).join('')}<p>脚相对髋部距离是有正负号的水平位置，不等同于落地步长；关节角度为三点夹角。</p>`;
   $('detail-events').innerHTML=report.events.length?report.events.map(e=>`<button data-time="${e.time}">${e.time.toFixed(1)}s · ${esc(e.issues.join('、'))}</button>`).join(''):'<p class="muted small">当前报告没有可用的异常标记。</p>';
   renderDetailChart(); updatePlayback(); page('detail'); window.scrollTo({top:0,behavior:'smooth'});
+}
+async function loadAdvice(id) {
+  try {
+    const advice=await api(`report/${id}/advice`);
+    if(!state.report||state.report.reportId!==id) return;
+    state.advice=advice||null; renderAdvice(advice);
+    if(advice) $('advice-generate').textContent='重新生成建议';
+  } catch(error) {}
+}
+async function generateAdvice() {
+  if(!needUser()||!state.report) return;
+  const button=$('advice-generate');
+  button.disabled=true; button.textContent='正在生成…';
+  try {
+    const advice=await api(`report/${state.report.reportId}/advice`,
+      {method:'POST',body:{refresh:!!state.advice}});
+    state.advice=advice; renderAdvice(advice); button.textContent='重新生成建议';
+    toast(advice.fallback?'智能建议暂不可用，已展示规则结果':'个性化建议已生成');
+  } catch(error) { toast(error.message||'生成失败，请稍后重试'); }
+  finally { button.disabled=false; }
+}
+function renderAdvice(advice) {
+  const box=$('detail-advice'); box.hidden=!advice;
+  if(!advice) { box.innerHTML=''; return; }
+  const data=advice.content||{}, parts=[];
+  if(data.summary) parts.push(`<p>${esc(data.summary)}</p>`);
+  if(data.priorities?.length) parts.push(`<h3>重点</h3><ul>${data.priorities.map(item=>`<li><strong>${esc(item.title)}</strong> ${esc(item.detail)}${item.evidence?` <span class="muted small">（${esc(item.evidence)}）</span>`:''}</li>`).join('')}</ul>`);
+  if(data.drills?.length) parts.push(`<h3>建议练习</h3><ul>${data.drills.map(item=>`<li><strong>${esc(item.name)}</strong> · ${esc(item.purpose)}${item.dosage?` · ${esc(item.dosage)}`:''}</li>`).join('')}</ul>`);
+  if(data.weeklyPlan?.length) parts.push(`<h3>一周安排</h3><ul>${data.weeklyPlan.map(item=>`<li><strong>${esc(item.day)}</strong> ${esc(item.focus)}：${esc(item.detail)}</li>`).join('')}</ul>`);
+  if(data.cautions?.length) parts.push(`<h3>注意</h3><ul>${data.cautions.map(item=>`<li>${esc(item)}</li>`).join('')}</ul>`);
+  if(advice.fallback) parts.push('<p class="muted small">当前为规则回退结果；配置并连通大模型后可重新生成。</p>');
+  else {
+    const pref=advice.prefs?`目标：${advice.prefs.goal} · 强度：${advice.prefs.intensity}`:'';
+    parts.push(`<p class="muted small">由 ${esc(advice.model||'大模型')} 生成${pref?` · ${esc(pref)}`:''} · 仅供训练参考，不构成医疗诊断。</p>`);
+  }
+  box.innerHTML=parts.join('');
 }
 function renderDetailChart() { if(!state.report) return; const key=$('detail-metric').value,r=state.report,series=[{color:'#276c50',points:r.timeSeries.map(p=>({x:p.time,y:p[key]}))}];
 if(key==='leanAngle'&&r.leanBottoms&&r.leanBottoms.length) { const at=t=>{const p=r.timeSeries.reduce((b,q)=>!b||Math.abs(q.time-t)<Math.abs(b.time-t)?q:b,null);return p?p[key]:null;}; series.push({color:'#d39947',markers:true,points:r.leanBottoms.map(t=>({x:t,y:at(t)}))}); $('chart-hint').textContent='橙色点为触底采样帧，前倾指标取这些时刻的峰值均值。点击曲线定位画面，或拖动左侧时间轴。空白段表示识别不足。'; }
@@ -426,11 +478,12 @@ on('account-btn','click',async()=>{if(state.user){await api('auth/logout',{metho
 on('auth-toggle','click',()=>{state.registering=!state.registering;$('auth-title').textContent=state.registering?'创建你的运动空间':'登录你的运动空间';$('auth-submit').textContent=state.registering?'注册并登录':'登录';$('auth-toggle').textContent=state.registering?'已有账号？登录':'没有账号？注册';$('auth-password').autocomplete=state.registering?'new-password':'current-password';$('auth-error').textContent='';});
 on('auth-close','click',()=>$('auth-dialog').close());
 on('auth-form','submit',async e=>{e.preventDefault();$('auth-submit').disabled=true;$('auth-error').textContent='';try{const user=await api(`auth/${state.registering?'register':'login'}`,{method:'POST',body:{username:$('auth-username').value.trim(),password:$('auth-password').value}});state.authEpoch++;state.user=user;profileToForms();$('auth-password').value='';$('auth-dialog').close();await refresh();}catch(error){$('auth-error').textContent=error.message;}finally{$('auth-submit').disabled=false;}});
-on('profile-form','submit',async e=>{e.preventDefault();if(!needUser())return;const p={nickname:$('profile-nickname').value,heightCm:Number($('profile-height').value),age:$('profile-age').value,gender:$('profile-gender').value,view:$('profile-view').value,direction:$('profile-direction').value,calibrationPixels:null};state.user.profile=await api('profile',{method:'PUT',body:p});profileToForms();toast('资料已保存');});
+on('profile-form','submit',async e=>{e.preventDefault();if(!needUser())return;const p={nickname:$('profile-nickname').value,heightCm:Number($('profile-height').value),age:$('profile-age').value,gender:$('profile-gender').value,goal:$('profile-goal').value,style:$('profile-style').value,intensity:$('profile-intensity').value,frequency:Number($('profile-frequency').value),notes:$('profile-notes').value,view:$('profile-view').value,direction:$('profile-direction').value,calibrationPixels:null};state.user.profile=await api('profile',{method:'PUT',body:p});profileToForms();toast('资料已保存');});
 on('video-file','change',e=>chooseFile(e.target.files[0]));
 on('analyze-btn','click',async()=>{if(!needUser()||state.busy)return;if(!state.file)throw new Error('请先选择视频，或使用摄像头录制');state.busy=true;$('analyze-btn').disabled=true;$('analyze-btn').textContent='正在上传并创建任务…';try{await submitVideo(state.file);toast('任务已提交，关闭页面后仍会继续分析');}finally{state.busy=false;$('analyze-btn').disabled=false;$('analyze-btn').textContent='开始分析';}});
 on('camera-open','click',openCamera);on('camera-close','click',closeCamera);on('quality-check','click',checkQuality);
 on('record-start','click',startRecording);on('live-start','click',liveAnalysis);
+on('advice-generate','click',generateAdvice);
 on('promote-fine','click',promoteToFine);on('save-live','click',saveLiveAnalysis);
 on('record-pause','click',()=>{const r=state.recorder;if(r?.state==='recording'){r.pause();$('record-pause').textContent='继续录制';$('record-status').textContent='录制已暂停';}else if(r?.state==='paused'){r.resume();$('record-pause').textContent='暂停录制';$('record-status').textContent='正在录制';}});
 on('record-stop','click',()=>{state.live=false;if(state.recorder?.state!=='inactive')state.recorder?.stop();recordingUI(false);});

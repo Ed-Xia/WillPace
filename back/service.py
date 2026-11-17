@@ -18,6 +18,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 import aiofiles
+import llm
 from aiohttp import web
 from storage import Store
 
@@ -89,6 +90,24 @@ def build_pdf(report):
             content.append(Paragraph(escape('参考：' + '；'.join(
                 f"{item['label']} {item['standard']}" for item in posture['standards']) + '；仅供观察，不是诊断结论。'), style))
         content.append(Spacer(1, 6))
+    advice = report.get('advice')
+    if advice:
+        heading = ParagraphStyle('AdviceCN', parent=style, fontSize=13, leading=20)
+        content.append(Paragraph(escape('个性化建议'), heading))
+        content.append(Paragraph(escape(advice.get('summary', '')), style))
+        for item in advice.get('priorities') or []:
+            content.append(Paragraph(escape(
+                f"· {item.get('title', '')}：{item.get('detail', '')} {item.get('evidence', '')}"), style))
+        if advice.get('drills'):
+            content.append(Paragraph(escape('建议练习：' + '；'.join(
+                f"{item.get('name', '')}（{item.get('dosage', '')}）" for item in advice['drills'])), style))
+        for day in advice.get('weeklyPlan') or []:
+            content.append(Paragraph(escape(
+                f"{day.get('day', '')} {day.get('focus', '')}：{day.get('detail', '')}"), style))
+        for note in advice.get('cautions') or []:
+            content.append(Paragraph(escape('注意：' + note), style))
+        content.append(Paragraph(escape('以上建议由大模型基于测量摘要生成，仅供训练参考，不构成医疗诊断。'), style))
+        content.append(Spacer(1, 8))
     for event in report['events'][:30]:
         content.append(Paragraph(escape(f"{event['time']:.1f} 秒：{'、'.join(event['issues'])}"), style))
     SimpleDocTemplate(stream, title=report['reportName'], author='PosePro').build(content)
@@ -104,6 +123,7 @@ class Service:
         self.render_queue = asyncio.Semaphore(1)
         self.tasks = set()
         self.auth_attempts = defaultdict(deque)
+        self.advice_calls = defaultdict(deque)
         self.realtime_connections = 0
 
     def owned(self, request, kind, object_id):
@@ -147,8 +167,9 @@ class Service:
     async def profile(self, request):
         body = await request.json()
         data = settings(body)
+        prefs = llm.preferences({**(request['user'].get('profile') or {}), **body})
         data.update(nickname=str(body.get('nickname', request['user']['username'])).strip()[:40],
-                    age=str(body.get('age', ''))[:3], gender=str(body.get('gender', ''))[:20])
+                    age=str(body.get('age', ''))[:3], gender=str(body.get('gender', ''))[:20], **prefs)
         self.store.profile(request['user']['id'], data)
         return result(data)
 
@@ -201,15 +222,24 @@ class Service:
         return result(job, status=202)
 
     async def run_job(self, job, video):
-        render = job.get('kind') == 'render'
-        async with (self.render_queue if render else self.queue):
+        kind = job.get('kind')
+        serialized = kind in ('render', 'skeleton')
+        async with (self.render_queue if serialized else self.queue):
             def progress(percent, stage, current=0, total=0):
                 job.update(status='processing', progress=round(percent, 1), stage=stage,
                            processedFrames=current, totalFrames=total)
                 self.store.put('job', job['analysisId'], job['userId'], job)
             try:
-                progress(1, '正在载入录制视频' if render else '正在载入模型')
-                if render:
+                progress(1, '正在载入录制视频' if kind == 'render' else
+                         ('正在准备骨架画布' if kind == 'skeleton' else '正在载入模型'))
+                if kind == 'skeleton':
+                    from analysis_engine import render_skeleton_video
+                    samples_path = Path(job.get('samplesPath', ''))
+                    if not samples_path.is_file():
+                        raise ValueError('实时抽帧数据已失效，请重新采集')
+                    report = await asyncio.to_thread(render_skeleton_video, samples_path,
+                                                     self.store.root / job['analysisId'], progress)
+                elif kind == 'render':
                     from analysis_engine import render_realtime_video
                     samples_path = Path(job.get('samplesPath', ''))
                     if not samples_path.is_file():
@@ -223,8 +253,10 @@ class Service:
                         engine = analyze_video
                     report = await asyncio.to_thread(engine, video['path'], self.store.root / job['analysisId'], job['settings'], progress)
                 report_id = secrets.token_hex(16)
-                report.update(reportId=report_id, analysisId=job['analysisId'], videoId=video['videoId'],
-                              reportName=Path(video['fileName']).stem[:100], reportType=job['reportType'],
+                report.update(reportId=report_id, analysisId=job['analysisId'],
+                              videoId=video['videoId'] if video else None,
+                              reportName=Path(video['fileName']).stem[:100] if video else job['name'],
+                              reportType=job['reportType'],
                               createTime=datetime.now(timezone.utc).isoformat())
                 self.store.put('report', report_id, job['userId'], report)
                 job.update(status='completed', progress=100, stage='分析完成', reportId=report_id)
@@ -243,7 +275,7 @@ class Service:
         job = self.owned(request, 'job', request.match_info['id'])
         if job['status'] != 'failed':
             raise ValueError('仅失败的任务可以重试')
-        video = self.owned(request, 'video', job['videoId'])
+        video = None if job.get('kind') == 'skeleton' else self.owned(request, 'video', job['videoId'])
         if sum(j['status'] in ('queued', 'processing') for j in self.store.list('job', request['user']['id'])) >= 3:
             return result(message='请等待当前任务完成后重试', status=429)
         job.update(status='queued', progress=0, stage='等待重试')
@@ -270,6 +302,7 @@ class Service:
         report = self.owned(request, 'report', report_id)
         if request.method == 'DELETE':
             self.store.delete('report', report_id, request['user']['id'])
+            self.store.delete('advice', report_id, request['user']['id'])
             job = self.store.get('job', report['analysisId'], request['user']['id']) if report.get('analysisId') else None
             if job:
                 self.store.delete('job', job['analysisId'], request['user']['id'])
@@ -292,6 +325,61 @@ class Service:
             self.store.put('report', report_id, request['user']['id'], report)
         return result(self.public_report(report))
 
+    async def advice(self, request):
+        report = self.owned(request, 'report', request.match_info['id'])
+        user_id = request['user']['id']
+        if request.method == 'GET':
+            return result(self.store.get('advice', report['reportId'], user_id))
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except (json.JSONDecodeError, ValueError):
+                body = {}
+        body = body if isinstance(body, dict) else {}
+        profile = dict(request['user'].get('profile') or {})
+        if isinstance(body.get('prefs'), dict):
+            profile.update({key: body['prefs'][key] for key in
+                            ('goal', 'style', 'intensity', 'frequency', 'notes') if key in body['prefs']})
+        prefs = llm.preferences(profile)
+        key = llm.prefs_key(prefs)
+        cached = self.store.get('advice', report['reportId'], user_id)
+        if cached and cached.get('prefsKey') == key and not body.get('refresh'):
+            return result(cached)
+        calls = self.advice_calls[user_id]
+        while calls and calls[0] < time.monotonic() - 3600:
+            calls.popleft()
+        if len(calls) >= 10:
+            return result(message='生成次数过多，请稍后再试', status=429)
+        calls.append(time.monotonic())
+        history = [llm.history_entry(item) for item in self.store.list('report', user_id)
+                   if item['reportId'] != report['reportId']][:5]
+        try:
+            content, meta = await llm.generate(llm.build_summary(report, history), prefs)
+        except (ValueError, asyncio.TimeoutError) as exc:
+            LOG.warning('LLM advice unavailable: %s', exc)
+            return result(self.fallback_advice(report, prefs, str(exc)), '智能建议暂不可用，已回落到规则建议')
+        advice = {'reportId': report['reportId'], 'content': content, 'prefs': prefs, 'prefsKey': key,
+                  'model': meta['model'], 'promptVersion': meta['promptVersion'],
+                  'createTime': datetime.now(timezone.utc).isoformat(), 'fallback': False}
+        self.store.put('advice', report['reportId'], user_id, advice)
+        return result(advice)
+
+    @staticmethod
+    def fallback_advice(report, prefs, reason):
+        posture = report.get('posture') or {}
+        priorities = [{'title': item.get('label') or '姿势偏离', 'detail': item.get('message') or '',
+                       'evidence': f"{(item.get('share') or 0) * 100:.0f}% 帧"}
+                      for item in (posture.get('issues') or [])[:3]]
+        if not priorities and report.get('suggestions'):
+            priorities = [{'title': '规则观察', 'detail': '；'.join(report['suggestions']),
+                           'evidence': '规则引擎'}]
+        return {'reportId': report.get('reportId'), 'fallback': True, 'prefs': prefs,
+                'createTime': datetime.now(timezone.utc).isoformat(),
+                'content': {'summary': '个性化建议当前不可用，以下为基于现有规则的观察。',
+                            'priorities': priorities, 'drills': [], 'weeklyPlan': [],
+                            'cautions': [f'未生成大模型建议（{reason}）。']}}
+
     async def media(self, request):
         report = self.owned(request, 'report', request.match_info['id'])
         if not report.get('renderedPath'):
@@ -308,7 +396,9 @@ class Service:
         report = self.owned(request, 'report', request.match_info['id'])
         kind = request.match_info['format']
         if kind == 'pdf':
-            body = await asyncio.to_thread(build_pdf, report)
+            advice = self.store.get('advice', report['reportId'], request['user']['id'])
+            content = {**report, 'advice': advice['content']} if advice else report
+            body = await asyncio.to_thread(build_pdf, content)
             mime = 'application/pdf'
         elif kind == 'csv':
             stream = io.StringIO(newline='')
@@ -527,6 +617,32 @@ class Service:
         task.add_done_callback(self.tasks.discard)
         return result(job, status=202)
 
+    def start_skeleton_render(self, request, body, cleaned):
+        """Queue a skeleton-only replay draw for realtime saves without a recording."""
+        rows, config, total, usable, counts, duration, width, height, unknown = cleaned
+        samples = self.clean_samples(body.get('samples'))
+        user_id = request['user']['id']
+        if sum(j['status'] in ('queued', 'processing') for j in self.store.list('job', user_id)) >= 3:
+            return result(message='最多同时提交 3 个任务，请等待当前任务完成', status=429)
+        analysis_id = secrets.token_hex(16)
+        directory = self.store.root / analysis_id
+        directory.mkdir(parents=True, exist_ok=True)
+        samples_path = directory / 'samples.json'
+        samples_path.write_text(json.dumps({
+            'rows': rows, 'samples': samples, 'quality': dict(counts), 'settings': config,
+            'duration': duration, 'width': width, 'height': height, 'unknown': unknown},
+            ensure_ascii=False, allow_nan=False), encoding='utf-8')
+        job = {'analysisId': analysis_id, 'videoId': None, 'userId': user_id,
+               'name': '实时抽帧 ' + datetime.now().strftime('%m-%d %H:%M'), 'status': 'queued',
+               'progress': 0, 'stage': '等待绘制骨架回放', 'settings': config,
+               'createdAt': time.time(), 'reportType': 'realtime', 'kind': 'skeleton',
+               'samplesPath': str(samples_path)}
+        self.store.put('job', analysis_id, user_id, job)
+        task = asyncio.create_task(self.run_job(job, None))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return result(job, status=202)
+
     async def save_realtime(self, request):
         """Persist realtime samples; with a recording, queue a skeleton replay render."""
         upload = None
@@ -539,6 +655,9 @@ class Service:
             if upload:
                 return self.start_render(request, upload, body, cleaned)
             rows, config, total, usable, counts, duration, width, height, unknown = cleaned
+            samples = body.get('samples')
+            if isinstance(samples, list) and len(samples) >= 5 and duration >= 1:
+                return self.start_skeleton_render(request, body, cleaned)
             from analysis_engine import snapshot_report
             report = snapshot_report(rows, counts, total, usable, config, duration, width, height)
             if unknown:
@@ -629,6 +748,8 @@ def create_app(data_dir=None, engine=None):
     routes.add_delete('/api/report/{id}', service.report)
     routes.add_put('/api/report/{id}/name', service.report)
     routes.add_get('/api/report/{id}/media', service.media)
+    routes.add_get('/api/report/{id}/advice', service.advice)
+    routes.add_post('/api/report/{id}/advice', service.advice)
     routes.add_get('/api/report/{id}/export/{format}', service.export)
 
     async def asset(request):
