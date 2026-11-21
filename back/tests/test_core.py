@@ -11,7 +11,7 @@ from storage import Store
 from service import settings
 from analysis_engine import angle, measure, quality, summarize, cadence, MeasurementHistory
 from analysis_engine import detect_orientation, OrientationEstimator, LABELS, render_realtime_video, render_skeleton_video
-from analysis_engine import evaluate_posture
+from analysis_engine import evaluate_posture, gait_asymmetry
 
 
 class StorageTests(unittest.TestCase):
@@ -154,29 +154,57 @@ class AnalysisTests(unittest.TestCase):
         self.assertIsNone(pending['leftStrideDistance'])
 
     def test_posture_reference_rules(self):
-        base = {'leanAngle': 7, 'verticalOscillation': 5, 'cadence': 180,
+        base = {'leanAngle': 3, 'verticalOscillation': 5, 'cadence': 180,
                 'leftElbow': 90, 'rightElbow': 90}
         self.assertEqual(evaluate_posture(base, self.settings), [])
-        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': 3}, self.settings)], ['lean_low'])
-        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': 12}, self.settings)], ['lean_high'])
-        self.assertEqual(evaluate_posture({**base, 'leanAngle': 3}, {**self.settings, 'view': 'front'}), [])
-        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'verticalOscillation': 9}, self.settings)], ['bounce_slight'])
-        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'verticalOscillation': 11}, self.settings)], ['bounce_high'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': .5}, self.settings)], ['lean_low'])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leanAngle': 8}, self.settings)], ['lean_high'])
+        self.assertEqual(evaluate_posture({**base, 'leanAngle': .5}, {**self.settings, 'view': 'front'}), [])
+        self.assertEqual(evaluate_posture({**base, 'verticalOscillation': 9}, self.settings), [])
+        self.assertEqual([item['code'] for item in evaluate_posture({**base, 'verticalOscillation': 12}, self.settings)], ['bounce_high'])
         self.assertEqual([item['code'] for item in evaluate_posture({**base, 'cadence': 160}, self.settings)], ['cadence_low'])
+        self.assertEqual(evaluate_posture({**base, 'cadence': 200}, self.settings), [])
         self.assertEqual([item['code'] for item in evaluate_posture({**base, 'leftElbow': 70}, self.settings)], ['elbow_left'])
+
+    def test_gait_asymmetry_flags_knee_and_stride(self):
+        rows = []
+        for i in range(30):
+            swing_left = i % 10 < 5
+            # 反相摆动下左右肘角同帧本就不同，但周期中位数一致（90/90）时不应误报；
+            # 这里把右臂中位数压到 70 才触发摆臂不对称。
+            rows.append({'time': i / 10,
+                         'leftElbow': 90, 'rightElbow': 70,
+                         'leftKnee': 100 if swing_left else 165,
+                         'rightKnee': 130 if not swing_left else 165,
+                         'leftStrideDistance': 60 if swing_left else -20,
+                         'rightStrideDistance': -20 if swing_left else 30})
+        codes = [item['code'] for item in gait_asymmetry(rows, self.settings)]
+        self.assertEqual(codes, ['elbow_asym', 'knee_asym', 'stride_asym'])
+        self.assertEqual([item['code'] for item in gait_asymmetry(rows, {**self.settings, 'view': 'front'})],
+                         ['elbow_asym', 'knee_asym'])
+        self.assertEqual(gait_asymmetry(rows[:19], self.settings), [])
+        antiphase = [{**row, 'leftElbow': 95 if i % 10 < 5 else 75, 'rightElbow': 75 if i % 10 < 5 else 95,
+                      'rightKnee': 100 if i % 10 >= 5 else 165,
+                      'rightStrideDistance': 60 if i % 10 >= 5 else -20}
+                     for i, row in enumerate(rows)]
+        self.assertEqual(gait_asymmetry(antiphase, self.settings), [])
 
     def test_summary_reports_posture_status_and_counts(self):
         rows = []
         for i in range(20):
             row = {key: None for key in LABELS}
-            row.update(time=i / 10, leanAngle=3 if i < 5 else 7, verticalOscillation=9)
+            # i=7/17 髋部最低即触底帧（前倾 8°）；i=2 非触底帧即使越界也不参与前倾判定。
+            row.update(time=i / 10, leanAngle=8 if i in (2, 7, 17) else 3,
+                       verticalOscillation=9, hipY=110 if i in (7, 17) else 100)
             rows.append(row)
         report = summarize(rows, Counter(), 20, 20, self.settings)
         codes = {item['code'] for item in report['posture']['issues']}
         self.assertEqual(report['posture']['status'], 'watch')
-        self.assertIn('lean_low', codes)
-        self.assertIn('bounce_slight', codes)
-        self.assertTrue(any(item['share'] == .25 for item in report['posture']['issues']))
+        self.assertIn('lean_high', codes)
+        self.assertNotIn('bounce_high', codes)
+        lean = next(item for item in report['posture']['issues'] if item['code'] == 'lean_high')
+        self.assertEqual(lean['frames'], 2)
+        self.assertEqual([event['time'] for event in report['events']], [.7, 1.7])
         insufficient = summarize([rows[0]] * 10, Counter(), 100, 0, self.settings)
         self.assertEqual(insufficient['posture']['status'], 'insufficient')
         self.assertEqual(insufficient['posture']['issues'], [])

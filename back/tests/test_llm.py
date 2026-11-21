@@ -25,7 +25,7 @@ class LlmTests(unittest.TestCase):
                   'quality': {'validFrameRatio': .9, 'status': 'available', 'scaleMethod': '手动身高标定'},
                   'metrics': {key: 10.0 for key in keys},
                   'posture': {'status': 'watch', 'issues': [{'label': '前倾', 'message': '偏小', 'share': .5}],
-                              'standards': [{'label': '前倾', 'standard': '5–10°'}]},
+                              'standards': [{'label': '前倾', 'standard': '0.9–5.2°'}]},
                   'events': [], 'timeSeries': rows}
         summary = llm.build_summary(report, [llm.history_entry(report)])
         self.assertNotIn('timeSeries', summary)

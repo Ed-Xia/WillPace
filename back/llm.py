@@ -6,7 +6,7 @@ import os
 
 import aiohttp
 
-PROMPT_VERSION = 'crispe-v1'
+PROMPT_VERSION = 'crispe-v2'
 GOALS = ('改善跑姿', '提升配速', '减脂', '伤后回归', '保持健康')
 STYLES = ('鼓励', '严格', '简洁')
 INTENSITIES = ('轻松', '中等', '高强度')

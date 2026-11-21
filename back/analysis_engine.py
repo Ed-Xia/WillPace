@@ -267,9 +267,19 @@ class LivePoseSession:
         row = measure(points if q['usable'] else None, world, visibility,
                       width, height, config, self.history, timestamp_ms / 1000)
         self.rows.append({'time': timestamp_ms / 1000,
+                          'hipY': row.get('hipY'), 'leanAngle': row.get('leanAngle'),
                           'leftStrideDistance': row.get('leftStrideDistance'),
-                          'rightStrideDistance': row.get('rightStrideDistance')})
+                          'rightStrideDistance': row.get('rightStrideDistance'),
+                          'leftKnee': row.get('leftKnee'), 'rightKnee': row.get('rightKnee'),
+                          'leftElbow': row.get('leftElbow'), 'rightElbow': row.get('rightElbow')})
         issues = evaluate_posture(row, config, cadence(list(self.rows)) if q['usable'] else None)
+        issues = [issue for issue in issues if issue['code'] not in ('lean_low', 'lean_high')]
+        # 前倾实时判定与报告同口径：用窗口内触底帧峰值的均值，而不是当前帧瞬时值，
+        # 避免摆动期躯干自然直立被误报；触底确认依赖下一帧髋部回升，天然滞后一帧。
+        peak = lean_at_midstance(list(self.rows), minimum=2)[0]
+        if peak is not None:
+            issues += evaluate_posture({'leanAngle': peak}, config)
+        issues += gait_asymmetry(list(self.rows), config)
         self.posture_history.append({issue['code'] for issue in issues})
         stable = [issue for issue in issues
                   if sum(issue['code'] in seen for seen in self.posture_history) >= 3]
@@ -305,11 +315,21 @@ def cadence(rows):
 
 
 POSTURE_STANDARDS = [
-    {'key': 'leanAngle', 'label': '躯干前倾角', 'standard': '5–10°', 'note': '取支撑期触底时刻的峰值，仅侧面视角'},
-    {'key': 'verticalOscillation', 'label': '垂直振幅', 'standard': '≤8 cm', 'note': '8–10 cm 为略高，超过 10 cm 为明显偏大'},
-    {'key': 'cadence', 'label': '步频', 'standard': '170–190 步/分钟', 'note': '估计值，随配速变化'},
-    {'key': 'elbow', 'label': '肘角', 'standard': '80–120°', 'note': '左右分别判断'},
+    {'key': 'leanAngle', 'label': '躯干前倾角', 'standard': '0.9–5.2°',
+     'note': '取支撑期触底时刻的峰值，仅侧面视角；区间来自文献群体统计，个体差异大'},
+    {'key': 'verticalOscillation', 'label': '垂直振幅', 'standard': '7–11 cm', 'note': '超过 11 cm 提示明显偏大，低于区间无需担心'},
+    {'key': 'cadence', 'label': '步频', 'standard': '≥170 步/分钟（参考）', 'note': '估计值，随配速变化，不是普适阈值'},
+    {'key': 'elbow', 'label': '肘角', 'standard': '80–110°', 'note': '左右分别判断'},
+    {'key': 'symmetry', 'label': '左右对称性', 'standard': '左右差 ≤10%',
+     'note': '各侧先取一段时间窗内的统计值再左右比：肘角取中位数，膝屈与前伸取峰值，不做同帧比较'},
 ]
+
+ASYMMETRY_LIMIT = .10
+
+
+def _rel_diff(left, right):
+    peak = max(abs(left), abs(right))
+    return abs(left - right) / peak if peak > 1e-6 else 0.0
 
 
 def evaluate_posture(metrics, settings, cadence_value=None):
@@ -323,45 +343,87 @@ def evaluate_posture(metrics, settings, cadence_value=None):
     if settings.get('view') == 'side':
         lean = metrics.get('leanAngle')
         if lean is not None:
-            if lean < 5:
-                add('lean_low', '前倾不足', f'前倾 {lean:.1f}°，低于参考 5–10°，身体略直立',
-                    '前倾不足，身体再前倾一点', lean, '5–10°')
-            elif lean > 10:
-                add('lean_high', '前倾过大', f'前倾 {lean:.1f}°，高于参考 5–10°，注意腰背放松',
-                    '前倾过大，注意收住', lean, '5–10°')
+            if lean < 0.9:
+                add('lean_low', '前倾不足', f'前倾 {lean:.1f}°，低于参考 0.9–5.2°，身体略直立',
+                    '前倾不足，身体再前倾一点', lean, '0.9–5.2°')
+            elif lean > 5.2:
+                add('lean_high', '前倾过大', f'前倾 {lean:.1f}°，高于参考 0.9–5.2°，注意腰背放松',
+                    '前倾过大，注意收住', lean, '0.9–5.2°')
     bounce = metrics.get('verticalOscillation')
-    if bounce is not None and bounce > 8:
-        severe = bounce > 10
-        add('bounce_high' if severe else 'bounce_slight',
-            '上下起伏偏大' if severe else '上下起伏略高',
-            f'垂直振幅 {bounce:.1f} cm，{"明显" if severe else "略"}高于参考 8 cm',
-            '上下起伏偏大，减小弹跳' if severe else '上下起伏略高，注意重心平稳',
-            bounce, '≤8 cm')
+    if bounce is not None and bounce > 11:
+        add('bounce_high', '上下起伏偏大', f'垂直振幅 {bounce:.1f} cm，高于参考 7–11 cm',
+            '上下起伏偏大，减小弹跳', bounce, '7–11 cm')
     for key, side in (('leftElbow', '左'), ('rightElbow', '右')):
         value = metrics.get(key)
-        if value is not None and not 80 <= value <= 120:
+        if value is not None and not 80 <= value <= 110:
             add('elbow_left' if key == 'leftElbow' else 'elbow_right', f'{side}肘角偏离',
-                f'{side}肘角 {value:.0f}°，参考 80–120°', '注意摆臂角度，保持手臂自然弯曲',
-                value, '80–120°', 'info')
+                f'{side}肘角 {value:.0f}°，参考 80–110°', '注意摆臂角度，保持手臂自然弯曲',
+                value, '80–110°', 'info')
     pace = cadence_value if cadence_value is not None else metrics.get('cadence')
-    if pace is not None:
-        if pace < 170:
-            add('cadence_low', '步频偏低', f'步频 {pace:.0f}，低于参考 170–190 步/分钟',
-                '步频偏低，适当加快节奏', pace, '170–190')
-        elif pace > 190:
-            add('cadence_high', '步频偏高', f'步频 {pace:.0f}，高于参考 170–190 步/分钟',
-                '步频偏高，注意放松节奏', pace, '170–190')
+    if pace is not None and pace < 170:
+        add('cadence_low', '步频偏低', f'步频 {pace:.0f}，低于参考 170 步/分钟',
+            '步频偏低，适当加快节奏', pace, '≥170（参考）')
     return issues
 
 
-def posture_summary(rows, metrics, settings, insufficient):
-    """Aggregate per-frame posture deviations and the summary-only cadence check."""
+def gait_asymmetry(rows, settings):
+    """Window-level left/right symmetry: each side is reduced to its own statistic first.
+
+    Never compares left with right inside one frame—limbs sit in opposite gait
+    phases there, so a healthy runner's same-frame L/R gap is large by design.
+    Elbow flexion averages out over the cycle (median), knee swing flexion and
+    forward reach compare each side's own peaks."""
+    if len(rows) < 20:
+        return []
+    issues = []
+
+    def stat(key, percentile=50):
+        values = [row[key] for row in rows if row.get(key) is not None]
+        return float(np.percentile(values, percentile)) if len(values) >= 10 else None
+
+    elbow = {side: stat(key) for side, key in (('left', 'leftElbow'), ('right', 'rightElbow'))}
+    if all(value is not None for value in elbow.values()):
+        diff = _rel_diff(elbow['left'], elbow['right'])
+        if diff > ASYMMETRY_LIMIT:
+            issues.append({'code': 'elbow_asym', 'label': '左右摆臂不对称',
+                           'message': f'肘角中位数左 {elbow["left"]:.0f}°、右 {elbow["right"]:.0f}°，'
+                                      f'左右差 {diff:.0%}，超过 10% 参考',
+                           'voice': '注意双臂对称摆动', 'standard': '≤10%', 'level': 'warn'})
+    flexion = {side: (None if (value := stat(key, 5)) is None else 180 - value)
+               for side, key in (('left', 'leftKnee'), ('right', 'rightKnee'))}
+    if all(value is not None and value >= 15 for value in flexion.values()):
+        diff = _rel_diff(flexion['left'], flexion['right'])
+        if diff > ASYMMETRY_LIMIT:
+            issues.append({'code': 'knee_asym', 'label': '左右膝屈不对称',
+                           'message': f'摆动相膝屈左 {flexion["left"]:.0f}°、右 {flexion["right"]:.0f}°，'
+                                      f'左右差 {diff:.0%}，超过 10% 参考',
+                           'voice': '注意左右腿抬膝对称', 'standard': '≤10%', 'level': 'warn'})
+    if settings.get('view') == 'side':
+        reach = {side: stat(key, 95) for side, key in
+                 (('left', 'leftStrideDistance'), ('right', 'rightStrideDistance'))}
+        if all(value is not None and value > 0 for value in reach.values()):
+            diff = _rel_diff(reach['left'], reach['right'])
+            if diff > ASYMMETRY_LIMIT:
+                issues.append({'code': 'stride_asym', 'label': '左右步幅不对称',
+                               'message': f'前伸距离左 {reach["left"]:.0f} cm、右 {reach["right"]:.0f} cm，'
+                                          f'左右差 {diff:.0%}，超过 10% 参考',
+                               'voice': '左右步幅差距偏大，注意双腿均衡', 'standard': '≤10%', 'level': 'warn'})
+    return issues
+
+
+def posture_summary(rows, metrics, settings, insufficient, lean_times=()):
+    """Aggregate per-frame posture deviations and the summary-only cadence check.
+
+    Reference-line 口径 for lean is the mid-stance peak, so only the frames listed
+    in `lean_times` may raise lean issues; other frames contribute bounce/elbow only."""
     if insufficient:
         return {'status': 'insufficient', 'issues': [], 'checkedFrames': len(rows),
                 'standards': POSTURE_STANDARDS}
+    lean_frames = {round(float(t), 3) for t in lean_times}
     counts = {}
     for row in rows:
-        for issue in evaluate_posture(row, settings):
+        check = row if round(float(row['time']), 3) in lean_frames else {**row, 'leanAngle': None}
+        for issue in evaluate_posture(check, settings):
             entry = counts.setdefault(issue['code'], {
                 **{key: value for key, value in issue.items() if key != 'value'}, 'frames': 0})
             entry['frames'] += 1
@@ -369,6 +431,8 @@ def posture_summary(rows, metrics, settings, insufficient):
         for issue in evaluate_posture({'cadence': metrics['cadence']}, settings):
             counts[issue['code']] = {**{key: value for key, value in issue.items() if key != 'value'},
                                      'frames': None}
+    for issue in gait_asymmetry(rows, settings):
+        counts[issue['code']] = {**issue, 'frames': None}
     total = max(len(rows), 1)
     issues = sorted(counts.values(), key=lambda item: (-(item['frames'] or total), item['code']))
     for item in issues:
@@ -381,7 +445,7 @@ def posture_summary(rows, metrics, settings, insufficient):
 def lean_at_midstance(rows, minimum=2):
     """Forward lean averaged over each stride's lowest-hip frame (mid-stance).
 
-    The 5–10° reference describes support-phase peak lean, not a cycle average.
+    The 0.9–5.2° reference describes support-phase peak lean, not a cycle average.
     Returns (mean, bottom times); (None, []) when fewer than `minimum`
     mid-stance moments are found, letting the caller fall back to the whole-video mean."""
     samples = [(r['time'], r['hipY'], r['leanAngle']) for r in rows
@@ -420,9 +484,12 @@ def summarize(rows, quality_counts, total, usable, settings):
                 metrics[key] = None
     events = []
     last = -10
+    lean_frames = {round(float(t), 3) for t in lean_bottoms}
     for row in rows:
         issues = [item['message'] for item in evaluate_posture(row, settings)
-                  if item['code'] in ('lean_low', 'lean_high', 'bounce_slight', 'bounce_high')]
+                  if item['code'] == 'bounce_high'
+                  or (item['code'] in ('lean_low', 'lean_high')
+                      and round(float(row['time']), 3) in lean_frames)]
         if issues and row['time'] - last >= 1:
             events.append({'time': row['time'], 'issues': issues})
             last = row['time']
@@ -436,10 +503,10 @@ def summarize(rows, quality_counts, total, usable, settings):
             suggestions.append('可评估片段未触发当前参考阈值。可与同条件的历史视频对比。')
         if settings['view'] != 'side':
             suggestions.append('本次为正面采集，前倾和前后距离不输出；步频由左右脚踝高度差估算。')
-    suggestions.append('前倾 5–10°、振幅 8 cm、步频 170–190、肘角 80–120° 为本项目的可视化参考线，不是个人诊断标准。')
+    suggestions.append('前倾 0.9–5.2°、振幅 7–11 cm、步频参考 ≥170、肘角 80–110°、左右差 ≤10% 为本项目的可视化参考线，不是个人诊断标准。')
     return {'metrics': metrics, 'events': events, 'suggestions': suggestions,
             'leanBottoms': lean_bottoms,
-            'posture': posture_summary(rows, metrics, settings, insufficient),
+            'posture': posture_summary(rows, metrics, settings, insufficient, lean_bottoms),
             'quality': {'validFrameRatio': round(coverage, 3), 'validFrames': usable, 'totalFrames': total,
                         'status': 'insufficient' if insufficient else 'available',
                         'metricCoverage': available,

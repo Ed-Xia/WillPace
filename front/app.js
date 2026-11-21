@@ -359,7 +359,7 @@ async function openReport(id) {
     const statusText={standard:'参考线内',watch:'发现偏离',insufficient:'数据不足，未判定'}[posture.status]||'';
     $('detail-posture').classList.toggle('warning',posture.status==='watch');
     $('detail-posture').innerHTML=`<strong>姿势判定：${statusText}</strong>`+
-      (posture.issues.length?`<ul>${posture.issues.map(item=>`<li>${esc(item.label)} · ${esc(item.message)}${item.share!=null?`（${(item.share*100).toFixed(0)}% 帧）`:''}</li>`).join('')}</ul>`:'<p class="muted small">未触发前倾、振幅、步频或肘角的参考线。</p>')+
+      (posture.issues.length?`<ul>${posture.issues.map(item=>`<li>${esc(item.label)} · ${esc(item.message)}${item.share!=null?`（${(item.share*100).toFixed(0)}% 帧）`:''}</li>`).join('')}</ul>`:'<p class="muted small">未触发前倾、振幅、步频、肘角或对称性的参考线。</p>')+
       `<p class="muted small">参考：${posture.standards.map(item=>`${item.label} ${item.standard}`).join(' · ')}；仅供观察，不是诊断结论。</p>`;
   }
   $('detail-metrics').innerHTML=['leanAngle','verticalOscillation','cadence','leftKnee'].map(key=>`<div class="metric"><span>${metrics[key][0]}</span><strong>${valueText(report.metrics[key])}<small>${finite(report.metrics[key])?metrics[key][1]:''}</small></strong></div>`).join('');

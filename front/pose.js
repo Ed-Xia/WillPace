@@ -98,7 +98,8 @@ function drawPose(data) {
   const posture=data.posture||[], flagged=new Set(posture.map(issue=>issue.code));
   $('pose-metrics').innerHTML=['leanAngle','verticalOscillation','leftKnee','rightKnee','leftHip','rightHip'].map(key=>{
     const warn=key==='leanAngle'?(flagged.has('lean_low')||flagged.has('lean_high'))
-      :key==='verticalOscillation'?(flagged.has('bounce_slight')||flagged.has('bounce_high')):false;
+      :key==='verticalOscillation'?flagged.has('bounce_high')
+      :(key==='leftKnee'||key==='rightKnee')?flagged.has('knee_asym'):false;
     return `<div class="${warn?'warn':''}"><span>${metrics[key][0]}</span><strong>${valueText(data.metrics[key])} <small>${metrics[key][1]}</small></strong></div>`;
   }).join('');
   const line=$('pose-posture');
